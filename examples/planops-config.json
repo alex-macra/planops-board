@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "documents": {
+    "include": ["tasks/**/*.md"],
+    "exclude": []
+  },
+  "workflow": {
+    "statusOrder": ["Ready", "In progress", "Blocked", "Complete"],
+    "activeStatuses": ["Ready", "In progress"],
+    "blockedStatuses": ["Blocked"],
+    "closedStatuses": ["Complete"],
+    "dependencySatisfiedStatuses": ["Complete"],
+    "priorityOrder": ["P0", "P1", "P2", "P3"]
+  },
+  "git": {
+    "protectedBranches": ["main", "master"],
+    "commitEnabled": true
+  },
+  "server": {
+    "port": 5176
+  }
+}

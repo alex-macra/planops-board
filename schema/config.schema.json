@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/alex-macra/planops-board/main/schema/config.schema.json",
+  "title": "PlanOps Board configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "documents", "workflow", "git", "server"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["include"],
+      "properties": {
+        "include": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\.\\.)(?!.*[?{}()!+@])(?!.*\\[)(?!.*\\])(?!.*//)(?!.*\\\\).+\\.[mM][dD]$"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "default": [],
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\.\\.)(?!.*[?{}()!+@])(?!.*\\[)(?!.*\\])(?!.*//)(?!.*\\\\).+$"
+          }
+        }
+      }
+    },
+    "projectsFile": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*(?:^|/)\\.(?:/|$)).+$"
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "statusOrder",
+        "activeStatuses",
+        "blockedStatuses",
+        "closedStatuses",
+        "dependencySatisfiedStatuses",
+        "priorityOrder"
+      ],
+      "properties": {
+        "statusOrder": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "activeStatuses": {
+          "$ref": "#/$defs/uniqueStrings"
+        },
+        "blockedStatuses": {
+          "$ref": "#/$defs/uniqueStrings"
+        },
+        "closedStatuses": {
+          "$ref": "#/$defs/uniqueStrings"
+        },
+        "dependencySatisfiedStatuses": {
+          "$ref": "#/$defs/uniqueStrings"
+        },
+        "priorityOrder": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protectedBranches", "commitEnabled"],
+      "properties": {
+        "protectedBranches": {
+          "$ref": "#/$defs/uniqueStrings"
+        },
+        "commitEnabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port"],
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        }
+      }
+    }
+  },
+  "$defs": {
+    "uniqueStrings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "nonEmptyUniqueStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

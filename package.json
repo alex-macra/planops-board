@@ -1,0 +1,74 @@
+{
+  "name": "planops-board",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local web app for Git-backed Markdown task ledgers.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alex-macra/planops-board.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alex-macra/planops-board/issues"
+  },
+  "homepage": "https://github.com/alex-macra/planops-board#readme",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "planops-board": "./cli/planops-board.ts"
+  },
+  "scripts": {
+    "dev": "tsx cli/planops-board.ts dev",
+    "start": "tsx cli/planops-board.ts start",
+    "demo:init": "node scripts/create-demo-repository.mjs",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:parity": "vitest run tests/demo-board.test.ts tests/detail.test.ts tests/patch.test.ts tests/validator.test.ts",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:a11y": "playwright test e2e/a11y.spec.ts --project=chromium",
+    "test:lighthouse": "tsx cli/lighthouse-a11y.ts",
+    "check:public": "node scripts/check-public-boundary.mjs",
+    "check:licenses": "node scripts/check-dependency-licenses.mjs",
+    "verify": "npm run typecheck && npm test && npm run test:parity && npm run build && npm run check:public && npm run check:licenses"
+  },
+  "dependencies": {
+    "@atlaskit/pragmatic-drag-and-drop": "^2.0.1",
+    "@atlaskit/pragmatic-drag-and-drop-auto-scroll": "^3.0.0",
+    "@atlaskit/pragmatic-drag-and-drop-hitbox": "^2.0.0",
+    "ajv": "^8.20.0",
+    "elkjs": "^0.9.3",
+    "fast-glob": "^3.3.3",
+    "lucide-react": "^0.471.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.61.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react-swc": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "jsdom": "^29.1.0",
+    "lighthouse": "^13.4.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
+    "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "@swc/core@1.15.47": true,
+    "esbuild@0.28.1": true
+  }
+}

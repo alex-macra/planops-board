@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PlanOps Board">
+  <rect width="512" height="512" rx="112" fill="#173326"/>
+  <path d="M132 128h248v56H132zm0 100h168v56H132zm0 100h216v56H132z" fill="#f6f9f4"/>
+  <circle cx="356" cy="256" r="28" fill="#7cc69b"/>
+</svg>

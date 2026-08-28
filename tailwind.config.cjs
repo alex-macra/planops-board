@@ -1,0 +1,55 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: 'class',
+  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  safelist: ['board-column-over', 'board-column-blocked'],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: [
+          'system-ui',
+          '-apple-system',
+          'Segoe UI',
+          'Roboto',
+          'Helvetica Neue',
+          'Arial',
+          'sans-serif',
+        ],
+      },
+      colors: {
+        'ui-bg': 'rgb(var(--ui-bg) / <alpha-value>)',
+        'ui-bg-raised': 'rgb(var(--ui-bg-raised) / <alpha-value>)',
+        'ui-bg-muted': 'rgb(var(--ui-bg-muted) / <alpha-value>)',
+        'ui-bg-subtle': 'rgb(var(--ui-bg-subtle) / <alpha-value>)',
+        'ui-text': 'rgb(var(--ui-text) / <alpha-value>)',
+        'ui-text-muted': 'rgb(var(--ui-text-muted) / <alpha-value>)',
+        'ui-text-subtle': 'rgb(var(--ui-text-subtle) / <alpha-value>)',
+        'ui-border': 'rgb(var(--ui-border) / <alpha-value>)',
+        'ui-accent': 'rgb(var(--ui-accent) / <alpha-value>)',
+        'ui-accent-hover': 'rgb(var(--ui-accent-hover) / <alpha-value>)',
+        'ui-accent-fg': 'rgb(var(--ui-accent-fg) / <alpha-value>)',
+        'ui-danger': 'rgb(var(--ui-danger) / <alpha-value>)',
+        'ui-danger-hover': 'rgb(var(--ui-danger-hover) / <alpha-value>)',
+        'ui-danger-fg': 'rgb(var(--ui-danger-fg) / <alpha-value>)',
+        'ui-danger-bg': 'rgb(var(--ui-danger-bg) / <alpha-value>)',
+      },
+      borderRadius: {
+        sm: '4px',
+        DEFAULT: '6px',
+        md: '6px',
+        lg: '8px',
+        xl: '8px',
+        '2xl': '12px',
+        '3xl': '12px',
+      },
+      boxShadow: {
+        sm: '0 1px 2px 0 rgb(0 0 0 / 0.04)',
+        DEFAULT: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+        md: '0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04)',
+        lg: '0 4px 12px -2px rgb(0 0 0 / 0.08)',
+        xl: '0 8px 24px -4px rgb(0 0 0 / 0.10)',
+      },
+    },
+  },
+  plugins: [],
+};

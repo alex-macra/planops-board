@@ -1,0 +1,23 @@
+[
+  {
+    "id": "moon-garden",
+    "label": "Moon Garden",
+    "scope": "product",
+    "repositories": ["moon-garden-ui", "moon-garden-api"],
+    "filePrefixes": ["plans/moon-garden.md"]
+  },
+  {
+    "id": "signal-harbor",
+    "label": "Signal Harbor",
+    "scope": "product",
+    "repositories": ["signal-harbor-web", "signal-harbor-worker"],
+    "filePrefixes": ["plans/signal-harbor.md"]
+  },
+  {
+    "id": "shared-observatory",
+    "label": "Shared Observatory",
+    "scope": "portfolio",
+    "repositories": ["observatory-kit"],
+    "filePrefixes": ["plans/shared-observatory.md"]
+  }
+]

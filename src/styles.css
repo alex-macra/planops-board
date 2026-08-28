@@ -1,0 +1,977 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Semantic theme tokens keep components independent from palette values. */
+
+:root {
+  color-scheme: light;
+
+  --ui-bg:          246 249 244;
+  --ui-bg-raised:   252 253 250;
+  --ui-bg-muted:    237 243 235;
+  --ui-bg-subtle:   222 232 219;
+
+  --ui-text:         25  39  31;
+  --ui-text-muted:   78  93  82;
+  --ui-text-subtle:  90 105  93;  /* 4.61:1 on the darkest sage surface */
+
+  --ui-border:      215 226 213;
+
+  --ui-accent:       41 103  70;  /* forest, 6.0:1 as text */
+  --ui-accent-hover: 30  82  56;
+  --ui-accent-fg:   255 255 255;
+
+  --ui-danger:      174  70  55;  /* clay, not fire-engine red */
+  --ui-danger-hover:146  56  43;
+  --ui-danger-fg:   255 255 255;
+  --ui-danger-bg:   250 235 232;
+
+  /* Status tones. Every one is legible as text, because a collapsed column's
+   * rail wears its tone as a text colour rather than as a mark. */
+  --tone-done:       83 111  87;
+  --tone-progress:   41 103  70;
+  --tone-review:     68 105 130;
+  --tone-blocked:   174  70  55;
+  --tone-deferred:  132 100  36;
+  --tone-neutral:    90 105  93;
+
+  /* Washes for the state pill, which the Now and Stories views use where a
+   * state is the headline rather than one attribute among six. Each is its tone
+   * dropped into the sage range; every pairing below clears 4.5:1 as small text
+   * (review 4.9, blocked 4.7, progress 5.6, deferred 4.7). Done and neutral get
+   * no wash of their own - finished work spends no attention budget. */
+  --wash-progress:  228 239 231;
+  --wash-review:    231 238 244;
+  --wash-blocked:   247 233 230;
+  --wash-deferred:  243 237 223;
+
+  /* Project tints for the dependency graph. Held to roughly one lightness so no
+   * single project shouts, and separated by hue rather than by saturation so
+   * they survive a colour-vision deficiency. */
+  --proj-1:   41 103  70;
+  --proj-2:   68 105 130;
+  --proj-3:  132 100  36;
+  --proj-4:  120  82 113;
+  --proj-5:   39 106  95;
+  --proj-6:  174  70  55;
+  --proj-7:  101 116 104;
+  --proj-8:  113 100  69;
+  --proj-9:   72  87 132;
+  --proj-10: 132  85  54;
+
+  /* The one non-colour token, and the only place the board is not set in the UI
+   * sans. A story sentence is prose about a person, not a field, so it is set
+   * like prose - which is also what stops anyone reading the outcome layer as
+   * just another row. Confined to `.story-quote`; a serif applied any wider
+   * would turn a working board into a document. */
+  --ui-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+}
+
+/* Dark colours are tuned independently for contrast rather than inverted. */
+
+html.dark {
+  color-scheme: dark;
+
+  --ui-bg:           11  16  21;  /* coal        #0B1015 */
+  --ui-bg-raised:    16  25  34;  /* coal-raised #101922, cards, 1.08:1 off the ground */
+  --ui-bg-muted:     23  41  54;  /* plate       #172936, 1.28:1, carries column headers */
+  --ui-bg-subtle:    29  51  66;  /* plate-soft  #1D3342 */
+
+  --ui-text:        240 230 210;  /* bone     #F0E6D2, 15.4:1 */
+  --ui-text-muted:  183 192 195;  /* ash      #B7C0C3, 10.3:1 */
+  --ui-text-subtle: 135 149 156;  /* ash-deep #87959C, 6.2:1, and 4.8:1 on a header plate */
+
+  --ui-border:       40  46  51;  /* line at 17%, resolved over coal */
+
+  --ui-accent:      118 181 213;  /* ore        #76B5D5, 8.5:1 as text */
+  --ui-accent-hover:169 220 242;  /* ore-bright #A9DCF2 */
+  /* The dark accent is a *light* blue: white on it is 2.3:1, so the foreground flips.
+   * This feeds every primary Button and the toast. */
+  --ui-accent-fg:    11  16  21;
+
+  --ui-danger:      217 145 112;  /* rust #D99170, 7.5:1, and far enough off ore in hue to
+                                   * stay separable under a colour-vision deficiency */
+  --ui-danger-hover:232 171 142;
+  --ui-danger-fg:    11  16  21;
+  --ui-danger-bg:    53  32  26;  /* derived: rust dropped into the coal range */
+
+  /* Finished work recedes to a cool grey. */
+  --tone-done:      163 176 181;
+  --tone-progress:  118 181 213;  /* ore */
+  --tone-review:    154 167 196;
+  --tone-blocked:   217 145 112;  /* rust */
+  --tone-deferred:  212 161 111;  /* leather-bright #D4A16F */
+  --tone-neutral:   135 149 156;  /* ash-deep */
+
+  /* The washes are mixed into the coal range rather than lightened out of it,
+   * so a pill stays a plate on the ground and never a glowing chip. Ratios run
+   * higher here than in light: 7.0 progress, 6.6 review, 5.9 blocked, 6.6
+   * deferred. */
+  --wash-progress:   20  37  47;
+  --wash-review:     26  33  49;
+  --wash-blocked:    53  32  26;
+  --wash-deferred:   44  35  23;
+
+  /* Same rule as the light ramp: one lightness, separated by hue, no green (the
+   * accent owns blue here, so the slate slot moves to indigo). 4.7:1 at the worst. */
+  --proj-1:  118 181 213;
+  --proj-2:  154 167 196;
+  --proj-3:  212 161 111;
+  --proj-4:  196 162 198;
+  --proj-5:  109 188 169;
+  --proj-6:  217 145 112;
+  --proj-7:  183 192 195;
+  --proj-8:  192 184 124;
+  --proj-9:  206 154 164;
+  --proj-10: 185 133  82;
+}
+
+@layer base {
+  body {
+    @apply bg-ui-bg text-ui-text antialiased;
+    letter-spacing: -0.005em;
+  }
+
+  h1,
+  h2 {
+    @apply tracking-[-0.011em];
+  }
+}
+
+@layer components {
+  /* Structure comes from hairlines and whitespace, not from elevation. */
+  .card {
+    @apply rounded-xl border border-ui-border bg-ui-bg-raised;
+  }
+
+  .card-muted {
+    @apply bg-ui-bg-muted/70;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium;
+  }
+
+  .chip-muted {
+    @apply bg-ui-bg-muted text-ui-text-muted;
+  }
+
+  .mono {
+    @apply font-mono;
+  }
+
+  /* Counts, stats and percentages sit in columns that change under you;
+   * proportional digits make them jitter. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/60 focus-visible:ring-offset-1 focus-visible:ring-offset-ui-bg;
+  }
+
+  .app-header {
+    @apply pt-3;
+  }
+
+  .app-header-main {
+    @apply flex flex-wrap items-center justify-between gap-3 pb-3;
+  }
+
+  .app-brand {
+    @apply flex min-w-0 items-center gap-3;
+  }
+
+  .app-mark {
+    @apply h-8 w-1 shrink-0 rounded-full bg-ui-accent;
+  }
+
+  .app-eyebrow,
+  .view-eyebrow {
+    @apply text-[10px] font-medium tracking-[0.12em] text-ui-text-subtle;
+    text-transform: uppercase;
+  }
+
+  .app-brand h1 {
+    @apply mt-0.5 text-base font-semibold tracking-[-0.02em] text-ui-text;
+  }
+
+  .app-actions {
+    @apply flex items-center gap-1;
+  }
+
+  /* Both tones are `--tone-*`, which every status on this board already clears
+   * 4.5:1 with, in both themes. The dot is decorative: the word beside it is the
+   * state, so a colour-blind reader loses nothing. */
+  .live-indicator {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap px-1.5 text-xs tabular-nums text-ui-text-subtle;
+  }
+
+  .live-indicator-warn {
+    color: rgb(var(--tone-blocked));
+  }
+
+  .live-dot {
+    @apply h-1.5 w-1.5 shrink-0 rounded-full;
+    background: currentColor;
+    opacity: 0.55;
+  }
+
+  .live-dot-on {
+    background: rgb(var(--tone-progress));
+    opacity: 1;
+  }
+
+  /* Held for a drag or a write, so the refresh is queued rather than lost. No
+   * animation: this is a sub-second state and a pulsing header is a distraction
+   * from the drag it is waiting on. */
+  .live-dot-busy {
+    background: rgb(var(--tone-progress));
+    opacity: 0.4;
+  }
+
+  .app-navigation {
+    @apply flex flex-wrap items-end justify-between gap-x-6 gap-y-2;
+  }
+
+  .source-freshness {
+    @apply border-t border-ui-border/60 py-1 text-[11px] text-ui-text-subtle;
+  }
+
+  .source-freshness > summary {
+    @apply focus-ring flex min-h-8 cursor-pointer items-center py-1;
+  }
+
+  .source-freshness > div {
+    @apply flex flex-wrap gap-x-4 gap-y-1 pb-1;
+  }
+
+  .source-freshness .mono {
+    overflow-wrap: anywhere;
+  }
+
+  .saved-views {
+    @apply flex flex-wrap items-center justify-end gap-1 pb-2;
+  }
+
+  .saved-views > select {
+    @apply h-8 min-w-36 py-0 text-xs;
+  }
+
+  .scope-switcher {
+    @apply flex items-center gap-2 pb-2 text-xs text-ui-text-subtle;
+  }
+
+  .scope-switcher > select {
+    @apply h-8 min-w-52 py-0 text-xs;
+  }
+
+  /* Preserve radio semantics while rendering quiet text tabs. */
+  .view-tabs [role="radiogroup"] {
+    @apply flex items-stretch gap-5 rounded-none border-0 bg-transparent p-0;
+  }
+
+  .view-tabs [role="radio"] {
+    @apply relative rounded-none bg-transparent px-0 py-2 text-xs font-medium text-ui-text-subtle shadow-none transition-colors hover:text-ui-text;
+  }
+
+  .view-tabs [role="radio"][aria-checked="true"] {
+    @apply bg-transparent text-ui-text shadow-none;
+  }
+
+  .view-tabs [role="radio"][aria-checked="true"]::after {
+    @apply absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-ui-accent;
+    content: "";
+  }
+
+  .view-intro {
+    @apply flex flex-wrap items-end justify-between gap-2 border-b border-ui-border/80 pb-3;
+  }
+
+  .view-description {
+    @apply mt-1 text-sm text-ui-text-muted;
+  }
+
+  .view-count {
+    @apply text-xs text-ui-text-subtle;
+  }
+
+  .workspace-toolbar {
+    @apply flex flex-wrap items-center gap-2 border-b border-ui-border/80 pb-3;
+  }
+
+  .toolbar select,
+  .toolbar input {
+    @apply h-8 py-0 text-xs;
+  }
+
+  .table-quiet thead th {
+    @apply text-[11px] font-medium normal-case tracking-normal;
+  }
+
+  .kv-quiet > div {
+    @apply rounded-none border-0 border-b border-ui-border/70 bg-transparent px-0 py-1.5;
+  }
+
+  .kv-quiet > div:last-child {
+    @apply border-b-0;
+  }
+
+  .kv-quiet > div > div:first-child {
+    @apply font-medium normal-case tracking-normal text-ui-text-muted;
+  }
+
+  .kv-quiet > div > div:last-child {
+    @apply mt-0 font-normal;
+  }
+
+  .stat-row {
+    @apply rounded-lg;
+  }
+
+  .stat {
+    @apply transition-colors;
+  }
+
+  .stat-action {
+    @apply cursor-pointer hover:bg-ui-bg-muted;
+  }
+
+  .stat-emphasis {
+    @apply bg-ui-accent/[0.055];
+  }
+
+  .stat-emphasis > p:nth-child(2) {
+    @apply text-ui-accent;
+  }
+
+  .rollup-context {
+    @apply flex flex-wrap justify-between gap-x-6 gap-y-1 text-xs leading-relaxed text-ui-text-subtle;
+  }
+
+  .rollup-section,
+  .rollup-signal {
+    @apply space-y-3;
+  }
+
+  .rollup-signal {
+    @apply border-l-2 border-ui-accent/60 pl-3;
+  }
+
+  .rollup-section-heading {
+    @apply flex items-end justify-between gap-3;
+  }
+
+  .rollup-section-heading h2 {
+    @apply text-sm font-semibold tracking-[-0.01em] text-ui-text;
+  }
+
+  .rollup-section-heading p {
+    @apply mt-1 text-xs leading-relaxed text-ui-text-subtle;
+  }
+
+  .rollup-section-heading > span {
+    @apply tabular text-xs text-ui-text-subtle;
+  }
+
+  .rollup-grid {
+    @apply grid gap-2 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .group-card {
+    @apply flex min-h-32 w-full flex-col border border-ui-border bg-ui-bg-raised p-3 transition-colors hover:border-ui-accent/40 hover:bg-ui-accent/[0.025];
+  }
+
+  .group-card-heading {
+    @apply flex items-start justify-between gap-3;
+  }
+
+  .group-card-name {
+    @apply line-clamp-2 text-sm font-medium leading-snug text-ui-text;
+  }
+
+  .group-card-progress {
+    @apply mt-3 block h-px w-full overflow-hidden bg-ui-border;
+  }
+
+  .group-card-progress > span {
+    @apply block h-full bg-ui-accent;
+  }
+
+  .group-card-summary {
+    @apply mt-2 block text-xs text-ui-text-subtle;
+  }
+
+  .group-card-tones {
+    @apply mt-3 flex flex-wrap gap-x-3 gap-y-1.5;
+  }
+
+  .stale-list {
+    @apply space-y-1.5 text-xs;
+  }
+
+  .stale-list > li {
+    @apply flex flex-wrap items-baseline gap-x-2 gap-y-1;
+  }
+
+  .stale-task-link {
+    @apply inline-flex min-h-6 items-center;
+  }
+
+  .stale-task {
+    @apply min-w-48 flex-1 truncate text-ui-text-muted;
+  }
+
+  .rollup-inline-disclosure {
+    @apply pt-1 text-xs text-ui-text-subtle;
+  }
+
+  .rollup-inline-disclosure > summary {
+    @apply cursor-pointer hover:text-ui-text;
+  }
+
+  .data-quality,
+  .rollup-disclosure {
+    @apply border-t border-ui-border;
+  }
+
+  .data-quality > summary,
+  .rollup-disclosure > summary {
+    @apply flex cursor-pointer list-none items-center justify-between gap-4 py-3 text-xs text-ui-text-muted hover:text-ui-text;
+  }
+
+  .data-quality > summary::-webkit-details-marker,
+  .rollup-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .data-quality > summary > span:first-child {
+    @apply inline-flex items-center gap-2 font-medium;
+  }
+
+  .data-quality > summary > span:last-child,
+  .rollup-disclosure > summary > span:last-child {
+    @apply tabular text-ui-text-subtle;
+  }
+
+  .data-quality-mark {
+    @apply h-1.5 w-1.5 rounded-full;
+    background-color: rgb(var(--tone-deferred));
+  }
+
+  .data-quality > ul {
+    @apply space-y-1 border-t border-ui-border/70 pb-3 pt-2 text-xs leading-relaxed text-ui-text-muted;
+  }
+
+  .rollup-disclosure > summary > span:first-child {
+    @apply flex min-w-0 flex-col gap-1;
+  }
+
+  .rollup-disclosure-title {
+    @apply text-sm font-semibold tracking-[-0.01em] text-ui-text;
+  }
+
+  .rollup-disclosure > .rollup-grid {
+    @apply pb-3;
+  }
+
+  .graph-node:focus {
+    outline: none;
+  }
+
+  .graph-node:focus rect:first-child {
+    stroke: rgb(var(--ui-accent)) !important;
+    stroke-width: 2.5;
+  }
+
+
+  /* Two views that answer a question rather than list a table, so they get one
+   * device the rest of the board does not have: a filled state pill. Everywhere
+   * else a status is one attribute among six and a dot beside a word is right;
+   * here the state *is* the headline, and the pill is what makes a group of
+   * fifteen rows readable at a glance. The dot form stays in Kanban, Backlog
+   * and the drawer. */
+  .pill {
+    @apply inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em];
+  }
+
+  .pill-progress {
+    background-color: rgb(var(--wash-progress));
+    color: rgb(var(--tone-progress));
+  }
+
+  .pill-review {
+    background-color: rgb(var(--wash-review));
+    color: rgb(var(--tone-review));
+  }
+
+  .pill-blocked {
+    background-color: rgb(var(--wash-blocked));
+    color: rgb(var(--tone-blocked));
+  }
+
+  .pill-deferred {
+    background-color: rgb(var(--wash-deferred));
+    color: rgb(var(--tone-deferred));
+  }
+
+  .pill-done,
+  .pill-neutral {
+    @apply bg-ui-bg-muted;
+  }
+
+  .pill-done {
+    color: rgb(var(--tone-done));
+  }
+
+  .pill-neutral {
+    @apply text-ui-text-subtle;
+  }
+
+  /* A group that cannot say why it contains a row is another inbox, so the rule
+   * sits in the header beside the name and is never truncated away. */
+  .now-group {
+    @apply overflow-hidden rounded-lg border border-ui-border;
+  }
+
+  .now-group-head {
+    @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-ui-border bg-ui-bg-muted px-3.5 py-2;
+  }
+
+  .now-group-head h2 {
+    @apply text-[13px] font-semibold tracking-[-0.005em] text-ui-text;
+  }
+
+  .now-group-rule {
+    @apply min-w-0 flex-1 text-[11.5px] leading-snug text-ui-text-subtle;
+  }
+
+  .now-group-count {
+    @apply tabular ml-auto shrink-0 font-mono text-[11px] text-ui-text-subtle;
+  }
+
+  .now-row {
+    @apply grid w-full grid-cols-[8.5rem_2rem_minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1
+           border-t border-ui-border/60 px-3.5 py-2 text-left text-[13px] transition-colors
+           first:border-t-0 hover:bg-ui-accent/[0.03];
+  }
+
+  .now-row-id {
+    @apply mono truncate text-[11.5px] text-ui-accent;
+  }
+
+  .now-row-priority {
+    @apply mono text-[10px] font-bold tracking-[0.03em] text-ui-text-subtle;
+  }
+
+  .now-row-what {
+    @apply min-w-0 truncate text-ui-text;
+  }
+
+  .now-row-side {
+    @apply tabular flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-ui-text-subtle;
+  }
+
+  /* What the view is *not* showing, and why. A Now view that silently drops 250
+   * rows is worth less than the Backlog it replaced. */
+  .now-folded {
+    @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 rounded-lg border border-dashed border-ui-border
+           px-3.5 py-2.5 text-xs leading-relaxed text-ui-text-subtle;
+  }
+
+  .now-folded b {
+    @apply font-semibold text-ui-text-muted;
+  }
+
+  .now-parked {
+    @apply flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-ui-text-subtle;
+  }
+
+  .story-lane {
+    @apply space-y-2.5;
+  }
+
+  .story-lane-head {
+    @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-ui-border pb-1.5;
+  }
+
+  .story-lane-head h2 {
+    @apply text-[11px] font-bold uppercase tracking-[0.1em] text-ui-text;
+  }
+
+  .story-lane-head > span {
+    @apply tabular mono text-[11px] text-ui-text-subtle;
+  }
+
+  .story-grid {
+    @apply grid gap-2.5;
+    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  }
+
+  .story-card {
+    @apply flex w-full flex-col gap-2.5 rounded-lg border border-ui-border bg-ui-bg-raised p-3.5 text-left
+           transition-colors hover:border-ui-accent/40 hover:bg-ui-accent/[0.02];
+  }
+
+  .story-card-blocked {
+    border-color: rgb(var(--tone-blocked) / 0.55);
+  }
+
+  .story-card-top {
+    @apply flex items-center gap-2;
+  }
+
+  .story-card-id {
+    @apply mono text-[11px] text-ui-accent;
+  }
+
+  .story-kind {
+    @apply rounded border border-ui-border px-1.5 py-px text-[9.5px] uppercase tracking-[0.08em] text-ui-text-subtle;
+  }
+
+  .story-line {
+    @apply text-[13.5px] leading-snug text-ui-text;
+  }
+
+  .story-role {
+    @apply font-semibold text-ui-accent;
+  }
+
+  /* Segments pair colour with counts and state labels elsewhere in the card. */
+  .story-bar {
+    @apply flex h-[5px] overflow-hidden rounded-full bg-ui-bg-subtle;
+  }
+
+  .story-bar > span {
+    @apply block h-full;
+  }
+
+  .story-foot {
+    @apply tabular flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11.5px] text-ui-text-subtle;
+  }
+
+  .story-foot b {
+    @apply font-semibold text-ui-text;
+  }
+
+  /* The sentence, at reading size and in the one serif on the board. */
+  .story-quote {
+    @apply rounded-r border-l-2 border-ui-accent bg-ui-accent/[0.06] px-3.5 py-3 text-[17px] leading-snug text-ui-text;
+    font-family: var(--ui-serif);
+  }
+
+  .story-field {
+    @apply space-y-1.5;
+  }
+
+  .story-field > h3 {
+    @apply text-[10.5px] font-bold uppercase tracking-[0.11em] text-ui-text-subtle;
+  }
+
+  .story-tasklist {
+    @apply overflow-hidden rounded-md border border-ui-border;
+  }
+
+  /* The drawer is narrow and a status pill is wide, so ID and status share the
+   * first line and the title gets the full width beneath. Truncating the title
+   * to "Preser…" made the list unreadable, which is most of what it is for. */
+  .story-tasklist > button {
+    @apply flex w-full flex-col gap-0.5 border-t border-ui-border/60 px-3 py-2 text-left
+           text-[12.5px] transition-colors first:border-t-0 hover:bg-ui-accent/[0.03];
+  }
+
+  .story-tasklist-head {
+    @apply flex items-center justify-between gap-3;
+  }
+
+
+  /* Columns scroll sideways inside their own track; the page never does. */
+  .board-track {
+    @apply overflow-x-auto pb-4;
+    scrollbar-color: rgb(var(--ui-border)) transparent;
+  }
+
+  .board-lane {
+    @apply mb-4 last:mb-0;
+  }
+
+  .board-lane-header {
+    @apply sticky left-0 mb-1.5 flex w-fit items-center gap-2 rounded px-2 py-1 text-sm
+           hover:bg-ui-bg-muted;
+  }
+
+  .board-columns {
+    @apply flex items-start gap-3;
+  }
+
+  .board-column {
+    @apply flex max-h-[calc(100vh-13rem)] w-[19rem] shrink-0 flex-col rounded-lg border border-ui-border/70 bg-ui-bg-muted/60
+           transition-[width,background-color] duration-150;
+  }
+
+  /* Nine states rarely all matter at once. Collapsing the ones you are not
+   * working in is what keeps a drag inside a single screen. */
+  .board-column-rail {
+    @apply w-[3.25rem];
+  }
+
+  .board-column-header {
+    @apply sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-lg border-b border-ui-border/70 bg-ui-bg-muted/85
+           px-3 py-2 text-xs font-semibold backdrop-blur;
+  }
+
+  .board-column-active:not(.board-column-rail) {
+    @apply border-ui-accent/40 bg-ui-accent/[0.025];
+  }
+
+  .board-column-active:not(.board-column-rail) .board-column-header {
+    box-shadow: inset 0 2px 0 rgb(var(--tone-progress) / 0.7);
+  }
+
+  .board-column-rail .board-column-header {
+    @apply h-full flex-col justify-start gap-2 px-1 py-2;
+  }
+
+  .board-column-rail .board-column-header > button {
+    @apply flex-col;
+  }
+
+  .board-rail-label {
+    @apply whitespace-nowrap text-xs font-semibold;
+    writing-mode: vertical-rl;
+  }
+
+  /* The minimum is what keeps an empty column a target you can actually hit.
+   * The dashed hint below only appears mid-drag, and without a floor the column
+   * would collapse to its header, quieter but nearly undroppable. */
+  .board-column-body {
+    @apply flex min-h-[4.5rem] flex-col gap-2 overflow-y-auto px-2 pb-2;
+  }
+
+  /* Only while something is in the air. Nine dashed boxes sitting there at rest
+   * is most of the noise on an otherwise quiet board. */
+  .board-column-empty {
+    @apply rounded border border-dashed border-ui-border px-2 py-4 text-center text-xs
+           text-ui-text-subtle;
+  }
+
+  .board-column-over {
+    @apply bg-ui-accent/[0.06] ring-1 ring-ui-accent/40;
+  }
+
+  /* A state this row's own document does not allow. Refusing at the cursor beats
+   * writing it and letting the validator reject it. */
+  .board-column-blocked {
+    @apply cursor-no-drop ring-1 ring-ui-danger/50;
+  }
+
+  .board-card-wrapper {
+    @apply relative;
+  }
+
+  .board-card {
+    @apply w-full cursor-grab rounded-lg border border-ui-border bg-ui-bg-raised p-3 text-left
+           transition-colors hover:border-ui-accent/35 hover:bg-ui-accent/[0.02] active:cursor-grabbing;
+  }
+
+  .board-card-active {
+    @apply border-l-2 border-l-ui-accent/70 bg-ui-accent/[0.035];
+  }
+
+  .board-card-menu {
+    @apply absolute right-2 top-2;
+  }
+
+  /* Every dependency satisfied. A hairline on the card's own edge rather than a
+   * chip in the body: it is a property of the row, not another thing to read.
+   * Drawn as a pseudo-element so it costs no layout. */
+  .board-card-startable {
+    @apply relative before:absolute before:inset-y-2 before:left-0 before:w-0.5
+           before:rounded-full before:bg-ui-accent/60;
+  }
+
+  .board-card-dragging {
+    @apply opacity-40;
+  }
+
+  .board-card-selected {
+    @apply ring-1 ring-ui-accent;
+  }
+
+  /* The move is already on screen; this says the file write is still in flight. */
+  .board-card-saving {
+    @apply animate-pulse border-ui-accent/60;
+  }
+
+  .dnd-preview {
+    @apply w-[17rem] rounded-lg border border-ui-accent bg-ui-bg-raised p-2.5 shadow-lg;
+  }
+
+  .dnd-preview-row {
+    @apply rounded border border-ui-accent bg-ui-bg-raised px-3 py-1.5 text-xs shadow-lg;
+  }
+
+  /* Insertion line for Backlog row reordering. */
+  .row-edge-top {
+    @apply relative before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-ui-accent;
+  }
+
+  .row-edge-bottom {
+    @apply relative before:absolute before:inset-x-0 before:bottom-0 before:h-0.5 before:bg-ui-accent;
+  }
+
+  /* Transparent columns keep cards visually raised in dark mode. */
+  html.dark .board-column {
+    @apply border-ui-border;
+    background-color: transparent;
+  }
+
+  html.dark .board-column-header {
+    background-color: rgb(var(--ui-bg-muted));
+    backdrop-filter: none;
+  }
+
+  /* Restore the drag target fill after the higher-specificity dark rule. */
+  html.dark .board-column-over {
+    background-color: rgb(var(--ui-accent) / 0.08);
+  }
+}
+
+@media (max-width: 639px) {
+  .app-header-main {
+    align-items: flex-start;
+  }
+
+  .app-actions {
+    margin-left: auto;
+  }
+
+  .app-navigation {
+    width: 100%;
+  }
+
+  .scope-switcher {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .scope-switcher > select {
+    min-width: 0;
+    width: min(19rem, 78vw);
+  }
+
+  .view-tabs {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .view-tabs [role="radiogroup"] {
+    min-width: max-content;
+  }
+
+  .view-intro {
+    align-items: flex-start;
+  }
+
+  .view-description {
+    max-width: 30rem;
+  }
+
+  .rollup-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .rollup-disclosure > summary {
+    align-items: flex-start;
+  }
+
+  .rollup-disclosure > summary > span:last-child {
+    padding-top: 0.125rem;
+    text-align: right;
+  }
+
+  .stale-task {
+    flex-basis: 100%;
+    min-width: 0;
+    padding-left: 0;
+  }
+
+  /* Four columns will not fit, and truncating the outcome to a word is worse
+   * than stacking. ID and priority share the first line; the outcome wraps
+   * instead of being cut. */
+  .now-row {
+    grid-template-columns: auto auto 1fr;
+    row-gap: 0.25rem;
+  }
+
+  .now-row-what {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
+
+  .now-row-side {
+    margin-left: auto;
+  }
+
+  .story-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-navigation,
+  .view-tabs,
+  .saved-views {
+    width: 100%;
+  }
+
+  .view-tabs {
+    overflow-x: auto;
+  }
+
+  .view-tabs [role="radiogroup"] {
+    min-width: max-content;
+  }
+
+  .saved-views {
+    justify-content: flex-start;
+  }
+}
+
+@media (pointer: coarse) {
+  button,
+  select,
+  input,
+  textarea,
+  [role="radio"] {
+    min-height: 44px;
+  }
+
+  .touch-link,
+  .source-freshness > summary,
+  details > summary {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .now-row,
+  .story-tasklist > button,
+  .board-card {
+    min-height: 44px;
+  }
+
+  .toolbar select,
+  .toolbar input,
+  .scope-switcher > select,
+  .saved-views > select {
+    height: 44px;
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  .app-header {
+    position: static;
+  }
+}
