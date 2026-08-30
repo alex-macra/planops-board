@@ -938,6 +938,7 @@ describe("Git boundaries", () => {
     const sourceRefPath = path.join(root, ".git", "refs", "heads", "main");
     const targetBranch = "plan/detach-safe-head";
     const targetRefPath = path.join(root, ".git", "refs", "heads", ...targetBranch.split("/"));
+    await mkdir(path.dirname(targetRefPath), { recursive: true });
     const replacement = "Replacement lock beside concurrent fictional blob ref.\n";
     let finishReplacement = (): void => undefined;
     let failReplacement = (_error: unknown): void => undefined;
@@ -950,8 +951,8 @@ describe("Git boundaries", () => {
       2_000,
     );
     let replaced = false;
-    const watcher = watch(path.join(root, ".git"), (_event, name) => {
-      if (String(name) !== "HEAD" || replaced) return;
+    const watcher = watch(path.dirname(targetRefPath), (_event, name) => {
+      if (String(name) !== path.basename(targetRefPath) || replaced) return;
       replaced = true;
       try {
         unlinkSync(sourceRefPath);
