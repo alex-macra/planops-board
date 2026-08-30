@@ -80,7 +80,12 @@ async function main(): Promise<void> {
       import("../vite.config.ts"),
     ]);
     const server = await createServer(createBoardViteConfig(runtime));
-    await server.listen();
+    try {
+      await server.listen();
+    } catch (error: unknown) {
+      await server.close();
+      throw error;
+    }
     server.printUrls();
     return;
   }

@@ -177,6 +177,7 @@ export function notesOf(block: DetailBlock) {
 
 export function commit(payload: {
   readonly taskIds: readonly string[];
+  readonly expectedCommitPreviewToken: string;
   readonly message?: string;
   readonly branch?: string;
 }) {

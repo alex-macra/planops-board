@@ -7,3 +7,6 @@ Include the affected commit, impact, and a minimal fictional reproduction.
 
 PlanOps Board is a local-only application. Do not expose it to a network or use
 it with an untrusted repository.
+
+Git attributes and local or global Git configuration are trusted executable
+input. Review custom filter drivers before opening a repository.

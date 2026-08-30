@@ -1,5 +1,5 @@
 import type { BoardRuntime } from "../runtime.ts";
-import { buildBoard } from "./model.ts";
+import { buildBoard, type SourceDocument } from "./model.ts";
 import { extractTables } from "./parse.ts";
 import { knownRepositories, planningDocuments } from "./corpus.ts";
 import { ID_PLACEHOLDERS, TASK_ID_HEADERS } from "./statuses.ts";
@@ -14,8 +14,10 @@ export class StructuralValidationError extends Error {
   }
 }
 
-export async function validateBoardRuntime(runtime: BoardRuntime): Promise<void> {
-  const documents = await planningDocuments(runtime);
+export function validatePlanningDocuments(
+  runtime: BoardRuntime,
+  documents: readonly SourceDocument[],
+): void {
   const details: string[] = [];
 
   for (const document of documents) {
@@ -48,4 +50,8 @@ export async function validateBoardRuntime(runtime: BoardRuntime): Promise<void>
   }
 
   if (details.length > 0) throw new StructuralValidationError(details);
+}
+
+export async function validateBoardRuntime(runtime: BoardRuntime): Promise<void> {
+  validatePlanningDocuments(runtime, await planningDocuments(runtime));
 }
