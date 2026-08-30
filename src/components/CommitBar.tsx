@@ -1,7 +1,7 @@
 import { Button, Input } from "../ui/index.tsx";
 import { GitBranch, Undo2 } from "lucide-react";
 import type { JSX } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { ApiError, commit, type GitStatusResponse } from "../api.ts";
 import { Notice } from "./Notice.tsx";
@@ -15,6 +15,48 @@ interface Props {
   readonly onUndo: () => void;
   readonly onRefresh: () => Promise<boolean>;
   readonly onCommitted: () => Promise<boolean>;
+}
+
+interface PreviewPathsProps {
+  readonly paths: readonly string[];
+  readonly scope: "included" | "excluded";
+}
+
+type CommitFailure =
+  | { readonly outcome: "refused"; readonly message: string }
+  | { readonly outcome: "unknown"; readonly message: string; readonly previewToken: string }
+  | { readonly outcome: "created"; readonly previewToken: string };
+
+const PATH_PAGE_SIZE = 100;
+
+function PreviewPaths({ paths, scope }: PreviewPathsProps): JSX.Element {
+  const [visibleCount, setVisibleCount] = useState(PATH_PAGE_SIZE);
+  const listId = useId();
+  const visiblePaths = paths.slice(0, visibleCount);
+  const remaining = Math.max(0, paths.length - visiblePaths.length);
+
+  useEffect(() => {
+    setVisibleCount(PATH_PAGE_SIZE);
+  }, [paths]);
+
+  return (
+    <>
+      <ul id={listId} aria-label={`${scope} paths`} className="mono mt-1 space-y-0.5">
+        {visiblePaths.map((file) => <li key={file}>{file}</li>)}
+      </ul>
+      {remaining > 0 ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-1"
+          aria-controls={listId}
+          onClick={() => setVisibleCount((current) => current + PATH_PAGE_SIZE)}
+        >
+          Show {Math.min(PATH_PAGE_SIZE, remaining)} more {scope} paths ({remaining} remaining)
+        </Button>
+      ) : null}
+    </>
+  );
 }
 
 /**
@@ -34,40 +76,92 @@ export function CommitBar({
   const [message, setMessage] = useState("");
   const [branch, setBranch] = useState(git.suggestedBranch);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [failure, setFailure] = useState<CommitFailure | null>(null);
   const [submittedPreviewToken, setSubmittedPreviewToken] = useState<string | null>(null);
   const requiresBranch = git.onProtectedBranch || git.detached;
   const included = git.changedPlanningFiles;
   const excluded = git.otherChangedFiles;
   const canCommit = git.commitEnabled && included.length > 0;
-  const previewPending = settling || submittedPreviewToken === git.commitPreviewToken;
+  const previewQuarantined = failure !== null
+    && failure.outcome !== "refused"
+    && failure.previewToken === git.commitPreviewToken;
+  const previewPending = settling
+    || submittedPreviewToken === git.commitPreviewToken
+    || previewQuarantined;
 
   useEffect(() => {
     setBranch(git.suggestedBranch);
   }, [git.branch, git.detached, git.suggestedBranch]);
 
+  useEffect(() => {
+    setFailure((current) => current !== null
+      && current.outcome !== "refused"
+      && current.previewToken !== git.commitPreviewToken ? null : current);
+    setSubmittedPreviewToken((current) => current !== null
+      && current !== git.commitPreviewToken ? null : current);
+  }, [git.commitPreviewToken]);
+
   if (included.length === 0 && excluded.length === 0) return null;
+
+  async function refreshPreview(): Promise<boolean> {
+    try {
+      return await onRefresh();
+    } catch {
+      return false;
+    }
+  }
 
   async function run(): Promise<void> {
     setBusy(true);
     setFailure(null);
     try {
-      await commit({
-        taskIds: touched,
-        expectedCommitPreviewToken: git.commitPreviewToken,
-        ...(message.trim() ? { message } : {}),
-        ...(requiresBranch ? { branch } : {}),
-      });
+      try {
+        await commit({
+          taskIds: touched,
+          expectedCommitPreviewToken: git.commitPreviewToken,
+          ...(message.trim() ? { message } : {}),
+          ...(requiresBranch ? { branch } : {}),
+        });
+      } catch (error) {
+        const refused = error instanceof ApiError && error.failure.kind !== undefined;
+        const errorMessage = error instanceof ApiError ? error.failure.error : String(error);
+        setFailure(refused
+          ? { outcome: "refused", message: errorMessage }
+          : { outcome: "unknown", message: errorMessage, previewToken: git.commitPreviewToken });
+        if (refused && error.failure.kind === "conflict") {
+          await refreshPreview();
+        }
+        return;
+      }
+
       setSubmittedPreviewToken(git.commitPreviewToken);
       setMessage("");
-      await onCommitted();
-    } catch (error) {
-      setFailure(error instanceof ApiError ? error.failure.error : String(error));
-      if (error instanceof ApiError && error.failure.kind === "conflict") {
-        await onRefresh();
+      let refreshed = false;
+      try {
+        refreshed = await onCommitted();
+      } catch {
+        refreshed = false;
+      }
+      if (refreshed) {
+        setSubmittedPreviewToken(null);
+      } else {
+        setFailure({ outcome: "created", previewToken: git.commitPreviewToken });
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function refreshQuarantinedPreview(): Promise<void> {
+    setRefreshing(true);
+    try {
+      if (await refreshPreview()) {
+        setFailure(null);
+        setSubmittedPreviewToken(null);
+      }
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -105,8 +199,36 @@ export function CommitBar({
       </div>
 
       {failure ? (
-        <Notice tone="blocked" title={failure} onDismiss={() => setFailure(null)}>
-          Nothing was committed.
+        <Notice
+          tone={failure.outcome === "created" ? "done" : "blocked"}
+          title={failure.outcome === "unknown"
+            ? "Commit outcome unknown"
+            : failure.outcome === "created" ? "Commit created" : failure.message}
+          onDismiss={failure.outcome === "refused" ? () => setFailure(null) : undefined}
+        >
+          {failure.outcome === "refused" ? (
+            "Nothing was committed."
+          ) : (
+            <>
+              {failure.outcome === "unknown" ? (
+                <>
+                  <p>{failure.message}</p>
+                  <p>The commit may have succeeded. Refresh the commit preview before trying again.</p>
+                </>
+              ) : (
+                <p>The commit was created, but the board could not refresh. Refresh the commit preview before continuing.</p>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-1"
+                loading={refreshing}
+                onClick={() => void refreshQuarantinedPreview()}
+              >
+                Refresh commit preview
+              </Button>
+            </>
+          )}
         </Notice>
       ) : null}
 
@@ -118,9 +240,7 @@ export function CommitBar({
               Included in this commit ({included.length})
             </p>
             {included.length > 0 ? (
-              <ul className="mono mt-1 space-y-0.5">
-                {included.map((file) => <li key={file}>{file}</li>)}
-              </ul>
+              <PreviewPaths paths={included} scope="included" />
             ) : (
               <p className="mt-1">No configured Markdown changes.</p>
             )}
@@ -130,9 +250,7 @@ export function CommitBar({
               Left out of this commit ({excluded.length})
             </p>
             {excluded.length > 0 ? (
-              <ul className="mono mt-1 space-y-0.5">
-                {excluded.map((file) => <li key={file}>{file}</li>)}
-              </ul>
+              <PreviewPaths paths={excluded} scope="excluded" />
             ) : (
               <p className="mt-1">No other dirty paths.</p>
             )}
@@ -167,7 +285,9 @@ export function CommitBar({
         <Button
           loading={busy}
           disabled={previewPending || (requiresBranch && branch.trim().length === 0)}
-          title={previewPending ? "Waiting for the latest commit preview" : undefined}
+          title={previewQuarantined
+            ? "Refresh the commit preview before retrying"
+            : previewPending ? "Waiting for the latest commit preview" : undefined}
           onClick={() => void run()}
         >
           Commit

@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+import { resetBrowserRepository } from "./fixture.ts";
+
 test.setTimeout(60_000);
+
+test.beforeEach(async () => {
+  await resetBrowserRepository();
+});
 
 test("edits, undoes, annotates, branches, and commits a fictional task", async ({ page }) => {
   const foreign = await page.request.get("/api/session", {

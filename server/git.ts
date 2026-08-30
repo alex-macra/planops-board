@@ -1,6 +1,18 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -34,6 +46,8 @@ export interface GitStatus {
   readonly otherChangedFiles: readonly string[];
   readonly fingerprint: string;
   readonly commitPreviewToken: string;
+  readonly sourceHead: string;
+  readonly worktreeDigest: string;
 }
 
 async function gitCommand(
@@ -87,6 +101,54 @@ function changedPaths(porcelain: string): string[] {
     }
   }
   return paths;
+}
+
+async function trustsFileMode(root: string): Promise<boolean> {
+  return git(root, "config", "--bool", "core.filemode")
+    .then((value) => value.trim() !== "false", () => true);
+}
+
+interface CapturedWorktreeEntry {
+  readonly bytes: Uint8Array;
+  readonly mode: "100644" | "100755";
+}
+
+function createWorktreeDigest(): ReturnType<typeof createHash> {
+  return createHash("sha256").update("planning-worktree-v1\0");
+}
+
+function addWorktreeDigestEntry(
+  hash: ReturnType<typeof createHash>,
+  relativePath: string,
+  entry: CapturedWorktreeEntry | null,
+): void {
+  hash.update("path\0").update(relativePath).update("\0");
+  if (!entry) {
+    hash.update("deleted\0");
+    return;
+  }
+  hash
+    .update("file\0")
+    .update(entry.mode)
+    .update("\0")
+    .update(String(entry.bytes.byteLength))
+    .update("\0")
+    .update(entry.bytes);
+}
+
+async function planningWorktreeState(
+  runtime: BoardRuntime,
+  paths: readonly string[],
+  headModes: ReadonlyMap<string, ReadonlySet<string>>,
+  trustFileMode: boolean,
+): Promise<string> {
+  const hash = createWorktreeDigest();
+  for (const relativePath of paths) {
+    const previousMode = [...(headModes.get(relativePath) ?? [])][0];
+    const entry = await captureEntry(runtime, relativePath, previousMode, trustFileMode);
+    addWorktreeDigestEntry(hash, relativePath, entry);
+  }
+  return hash.digest("hex");
 }
 
 export async function planningGitAllowlist(
@@ -161,7 +223,7 @@ export async function gitStatus(
     "-z",
     "--untracked-files=all",
   );
-  const head = await git(runtime.repositoryRoot, "rev-parse", "HEAD");
+  const head = (await git(runtime.repositoryRoot, "rev-parse", "HEAD")).trim();
 
   const changed = new Set<string>();
   const other = new Set<string>();
@@ -170,8 +232,19 @@ export async function gitStatus(
   }
   const changedPlanningFiles = [...changed].sort();
   const otherChangedFiles = [...other].sort();
+  const [indexState, headEntries, trustFileMode] = await Promise.all([
+    git(runtime.repositoryRoot, "ls-files", "--stage", "-z"),
+    git(runtime.repositoryRoot, "ls-tree", "-r", "-z", head),
+    trustsFileMode(runtime.repositoryRoot),
+  ]);
+  const worktreeState = await planningWorktreeState(
+    runtime,
+    changedPlanningFiles,
+    modesByPath(headEntries),
+    trustFileMode,
+  );
 
-  return {
+  const status: GitStatus = {
     branch,
     detached,
     onProtectedBranch: runtime.config.git.protectedBranches.includes(branch),
@@ -182,8 +255,8 @@ export async function gitStatus(
       .update(`${branch}\n${changedPlanningFiles.join("\n")}`)
       .digest("hex"),
     commitPreviewToken: createHash("sha256")
-      .update("v1\0")
-      .update(head.trim())
+      .update("v2\0")
+      .update(head)
       .update("\0branch\0")
       .update(branch)
       .update("\0included\0")
@@ -192,8 +265,19 @@ export async function gitStatus(
       .update(otherChangedFiles.join("\0"))
       .update("\0porcelain\0")
       .update(porcelain)
+      .update("\0index\0")
+      .update(indexState)
+      .update("\0included-worktree\0")
+      .update(worktreeState)
       .digest("hex"),
+    sourceHead: head,
+    worktreeDigest: worktreeState,
   };
+  Object.defineProperties(status, {
+    sourceHead: { enumerable: false },
+    worktreeDigest: { enumerable: false },
+  });
+  return status;
 }
 
 export async function gitHead(runtime: BoardRuntime): Promise<string> {
@@ -265,6 +349,11 @@ interface CapturedEntry {
   readonly oid: string;
 }
 
+interface SelectedEntry {
+  readonly path: string;
+  readonly entry: CapturedEntry | null;
+}
+
 interface IndexEntry {
   readonly mode: string;
   readonly oid: string;
@@ -274,7 +363,21 @@ interface IndexEntry {
 
 interface CommitCandidate {
   readonly tree: string;
-  readonly indexInfo: string;
+  readonly selectedEntries: readonly SelectedEntry[];
+  readonly worktreeDigest: string;
+}
+
+interface HeldIndexLock {
+  readonly indexPath: string;
+  readonly lockPath: string;
+  readonly device: number;
+  readonly inode: number;
+  handle: FileHandle | null;
+  published: boolean;
+}
+
+interface PreparedIndex {
+  readonly originalBytes: Uint8Array;
 }
 
 function errorCode(error: unknown): string {
@@ -296,6 +399,102 @@ function indexEntries(output: string): IndexEntry[] {
   return entries;
 }
 
+function selectedIndexInfo(
+  selectedEntries: readonly SelectedEntry[],
+  oidLength: number,
+): string {
+  const zeroOid = "0".repeat(oidLength);
+  let input = "";
+  for (const selected of selectedEntries) {
+    input += `0 ${zeroOid}\t${selected.path}\0`;
+  }
+  for (const selected of selectedEntries) {
+    if (selected.entry) {
+      input += `${selected.entry.mode} ${selected.entry.oid}\t${selected.path}\0`;
+    }
+  }
+  return input;
+}
+
+function indexTuple(entry: IndexEntry): string {
+  return `${entry.path}\0${entry.stage}\0${entry.mode}\0${entry.oid}`;
+}
+
+function isDirectoryFileConflict(left: string, right: string): boolean {
+  return left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function assertNoExcludedDirectoryFileConflicts(
+  selectedEntries: readonly SelectedEntry[],
+  currentEntries: readonly IndexEntry[],
+): void {
+  const selectedPaths = new Set(selectedEntries.map((selected) => selected.path));
+  for (const selected of selectedEntries) {
+    if (!selected.entry) continue;
+    const conflict = currentEntries.find((entry) =>
+      !selectedPaths.has(entry.path) && isDirectoryFileConflict(selected.path, entry.path)
+    );
+    if (conflict) {
+      throw new GitPreviewConflictError(
+        `the selected file ${selected.path} conflicts with excluded staged path ${conflict.path}`,
+      );
+    }
+  }
+}
+
+function assertExcludedEntriesUnchanged(
+  selectedEntries: readonly SelectedEntry[],
+  before: readonly IndexEntry[],
+  after: readonly IndexEntry[],
+): void {
+  const selectedPaths = new Set(selectedEntries.map((selected) => selected.path));
+  const excludedBefore = before
+    .filter((entry) => !selectedPaths.has(entry.path))
+    .map(indexTuple)
+    .sort();
+  const excludedAfter = after
+    .filter((entry) => !selectedPaths.has(entry.path))
+    .map(indexTuple)
+    .sort();
+  if (
+    excludedBefore.length !== excludedAfter.length ||
+    excludedBefore.some((entry, index) => entry !== excludedAfter[index])
+  ) {
+    throw new GitPreviewConflictError(
+      "the selected files conflict with excluded staged changes; review the updated commit preview",
+    );
+  }
+}
+
+function assertSelectedEntriesApplied(
+  selectedEntries: readonly SelectedEntry[],
+  preparedEntries: readonly IndexEntry[],
+): void {
+  for (const selected of selectedEntries) {
+    const entries = preparedEntries.filter((entry) => entry.path === selected.path);
+    if (!selected.entry) {
+      if (entries.length > 0) {
+        throw new GitPreviewConflictError(
+          `the prepared Git index retained selected deletion ${selected.path}`,
+        );
+      }
+      continue;
+    }
+    const entry = entries[0];
+    if (
+      entries.length !== 1 ||
+      !entry ||
+      entry.stage !== "0" ||
+      entry.mode !== selected.entry.mode ||
+      entry.oid !== selected.entry.oid
+    ) {
+      throw new GitPreviewConflictError(
+        `the prepared Git index does not match selected file ${selected.path}`,
+      );
+    }
+  }
+}
+
 function invalidPlanningDocuments(error: unknown): GitError {
   const details =
     typeof error === "object" && error !== null && "details" in error
@@ -311,7 +510,7 @@ async function captureEntry(
   relativePath: string,
   previousMode: string | undefined,
   trustFileMode: boolean,
-): Promise<{ readonly bytes: Uint8Array; readonly mode: "100644" | "100755" } | null> {
+): Promise<CapturedWorktreeEntry | null> {
   const absolutePath = resolveWithin(runtime.repositoryRoot, relativePath);
   try {
     const named = await lstat(absolutePath);
@@ -413,47 +612,374 @@ async function buildCommitCandidate(
   head: string,
   files: readonly string[],
 ): Promise<CommitCandidate> {
-  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "planops-board-commit-"));
+  const repositoryToken = createHash("sha256")
+    .update(runtime.repositoryRoot)
+    .digest("hex")
+    .slice(0, 16);
+  const temporaryDirectory = await mkdtemp(
+    path.join(tmpdir(), `planops-board-commit-${repositoryToken}-`),
+  );
   const indexFile = path.join(temporaryDirectory, "index");
   try {
     await gitCommand(runtime.repositoryRoot, ["read-tree", head], { indexFile });
     const headModes = modesByPath(await git(runtime.repositoryRoot, "ls-tree", "-r", "-z", head));
-    const trustFileMode = await git(runtime.repositoryRoot, "config", "--bool", "core.filemode")
-      .then((value) => value.trim() !== "false", () => true);
-    const captured = new Map<string, CapturedEntry>();
+    const trustFileMode = await trustsFileMode(runtime.repositoryRoot);
+    const selectedEntries: SelectedEntry[] = [];
+    const worktreeHash = createWorktreeDigest();
 
     for (const relativePath of files) {
       const previousMode = [...(headModes.get(relativePath) ?? [])][0];
       const entry = await captureEntry(runtime, relativePath, previousMode, trustFileMode);
-      if (!entry) continue;
+      addWorktreeDigestEntry(worktreeHash, relativePath, entry);
+      if (!entry) {
+        selectedEntries.push({ path: relativePath, entry: null });
+        continue;
+      }
       const oid = (await gitCommand(
         runtime.repositoryRoot,
         ["hash-object", "-w", "--path", relativePath, "--stdin"],
         { stdin: entry.bytes },
       )).trim();
-      captured.set(relativePath, { mode: entry.mode, oid });
+      selectedEntries.push({ path: relativePath, entry: { mode: entry.mode, oid } });
     }
 
-    const zeroOid = "0".repeat(head.length);
-    let indexInfo = "";
-    for (const relativePath of files) {
-      indexInfo += `0 ${zeroOid}\t${relativePath}\0`;
-      const entry = captured.get(relativePath);
-      if (entry) indexInfo += `${entry.mode} ${entry.oid}\t${relativePath}\0`;
-    }
     await gitCommand(
       runtime.repositoryRoot,
       ["update-index", "-z", "--add", "--index-info"],
-      { indexFile, stdin: indexInfo },
+      { indexFile, stdin: selectedIndexInfo(selectedEntries, head.length) },
     );
     validatePlanningDocuments(runtime, await candidateDocuments(runtime, indexFile));
     const tree = (await gitCommand(runtime.repositoryRoot, ["write-tree"], { indexFile })).trim();
-    return { tree, indexInfo };
+    const changed = (await git(
+      runtime.repositoryRoot,
+      "diff-tree",
+      "--no-commit-id",
+      "--name-only",
+      "-r",
+      "-z",
+      head,
+      tree,
+    )).split("\0").filter(Boolean);
+    const selectedPaths = new Set(selectedEntries.map((selected) => selected.path));
+    const unexpectedPath = changed.find((relativePath) => !selectedPaths.has(relativePath));
+    if (unexpectedPath) {
+      throw new GitPreviewConflictError(
+        `candidate commit would change excluded path ${unexpectedPath}; review the updated commit preview`,
+      );
+    }
+    return { tree, selectedEntries, worktreeDigest: worktreeHash.digest("hex") };
   } catch (error) {
     if (error instanceof GitError) throw error;
     throw invalidPlanningDocuments(error);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function acquireIndexLock(runtime: BoardRuntime): Promise<HeldIndexLock> {
+  const indexPath = path.join(runtime.gitDirectory, "index");
+  const lockPath = `${indexPath}.lock`;
+  let handle: FileHandle;
+  try {
+    handle = await open(lockPath, "wx", 0o666);
+  } catch (error) {
+    if (errorCode(error) === "EEXIST") {
+      throw new GitPreviewConflictError(
+        "the Git index is locked by another operation; review the commit preview after it finishes",
+      );
+    }
+    throw new GitError(`could not lock the Git index: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    const metadata = await handle.stat();
+    return {
+      indexPath,
+      lockPath,
+      device: metadata.dev,
+      inode: metadata.ino,
+      handle,
+      published: false,
+    };
+  } catch (error) {
+    const cleanupErrors: unknown[] = [];
+    let ownedIdentity: { readonly device: number; readonly inode: number } | null = null;
+    try {
+      const [opened, named] = await Promise.all([handle.stat(), lstat(lockPath)]);
+      if (opened.dev === named.dev && opened.ino === named.ino) {
+        ownedIdentity = { device: opened.dev, inode: opened.ino };
+      } else {
+        cleanupErrors.push(new GitPreviewConflictError(
+          "ownership of the Git index lock was lost during acquisition",
+        ));
+      }
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    try {
+      await handle.close();
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    if (ownedIdentity) {
+      try {
+        const named = await lstat(lockPath);
+        if (named.dev === ownedIdentity.device && named.ino === ownedIdentity.inode) {
+          await unlink(lockPath);
+        } else {
+          cleanupErrors.push(new GitPreviewConflictError(
+            "ownership of the Git index lock was lost before acquisition cleanup",
+          ));
+        }
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    const inspectionError = new GitError(
+      `could not inspect the Git index lock: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [inspectionError, ...cleanupErrors],
+        "could not inspect or clean up the Git index lock",
+      );
+    }
+    throw inspectionError;
+  }
+}
+
+async function assertIndexLockOwned(lock: HeldIndexLock): Promise<void> {
+  let metadata;
+  try {
+    metadata = await lstat(lock.lockPath);
+  } catch (error) {
+    throw new GitPreviewConflictError(
+      `ownership of the Git index lock was lost: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (metadata.dev !== lock.device || metadata.ino !== lock.inode) {
+    throw new GitPreviewConflictError(
+      "ownership of the Git index lock was lost; another Git operation may be running",
+    );
+  }
+}
+
+async function releaseIndexLock(lock: HeldIndexLock): Promise<void> {
+  if (lock.published) return;
+  const errors: unknown[] = [];
+  let owned = false;
+  try {
+    await assertIndexLockOwned(lock);
+    owned = true;
+  } catch {}
+  if (lock.handle) {
+    try {
+      await lock.handle.close();
+      lock.handle = null;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (owned) {
+    try {
+      await unlink(lock.lockPath);
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") errors.push(error);
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "could not release the Git index lock");
+  }
+}
+
+async function withIndexLock<T>(
+  runtime: BoardRuntime,
+  operation: (lock: HeldIndexLock) => Promise<T>,
+): Promise<T> {
+  const lock = await acquireIndexLock(runtime);
+  let result: T;
+  try {
+    result = await operation(lock);
+  } catch (error) {
+    try {
+      await releaseIndexLock(lock);
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Git index operation and cleanup failed");
+    }
+    throw error;
+  }
+  await releaseIndexLock(lock);
+  return result;
+}
+
+async function prepareLockedIndex(
+  runtime: BoardRuntime,
+  lock: HeldIndexLock,
+  selectedEntries: readonly SelectedEntry[],
+  oidLength: number,
+): Promise<PreparedIndex> {
+  if (!lock.handle) throw new GitError("the Git index lock is not held");
+  const temporaryDirectory = await mkdtemp(
+    path.join(runtime.gitDirectory, "planops-board-index-"),
+  );
+  const preparedPath = path.join(temporaryDirectory, "index");
+  try {
+    let originalBytes: Uint8Array;
+    let originalMode: number;
+    try {
+      const [bytes, metadata] = await Promise.all([
+        readFile(lock.indexPath),
+        stat(lock.indexPath),
+      ]);
+      originalBytes = bytes;
+      originalMode = metadata.mode & 0o777;
+    } catch (error) {
+      throw new GitError(
+        `could not read the Git index: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    await writeFile(preparedPath, originalBytes, { mode: originalMode });
+    const before = indexEntries(await gitCommand(
+      runtime.repositoryRoot,
+      ["ls-files", "--stage", "-z"],
+      { indexFile: preparedPath },
+    ));
+    assertNoExcludedDirectoryFileConflicts(selectedEntries, before);
+    await gitCommand(
+      runtime.repositoryRoot,
+      ["update-index", "-z", "--add", "--index-info"],
+      { indexFile: preparedPath, stdin: selectedIndexInfo(selectedEntries, oidLength) },
+    );
+    const after = indexEntries(await gitCommand(
+      runtime.repositoryRoot,
+      ["ls-files", "--stage", "-z"],
+      { indexFile: preparedPath },
+    ));
+    assertSelectedEntriesApplied(selectedEntries, after);
+    assertExcludedEntriesUnchanged(selectedEntries, before, after);
+
+    const preparedHandle = await open(preparedPath, "r+");
+    try {
+      await preparedHandle.sync();
+    } finally {
+      await preparedHandle.close();
+    }
+    const preparedBytes = await readFile(preparedPath);
+    const currentBytes = await readFile(lock.indexPath);
+    if (!Buffer.from(currentBytes).equals(Buffer.from(originalBytes))) {
+      throw new GitPreviewConflictError(
+        "the Git index changed while preparing the commit; review the updated commit preview",
+      );
+    }
+
+    await assertIndexLockOwned(lock);
+    await lock.handle.chmod(originalMode);
+    await lock.handle.writeFile(preparedBytes);
+    await lock.handle.sync();
+    await lock.handle.close();
+    lock.handle = null;
+    return { originalBytes };
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function assertIndexUnchanged(lock: HeldIndexLock, prepared: PreparedIndex): Promise<void> {
+  const currentBytes = await readFile(lock.indexPath);
+  if (!Buffer.from(currentBytes).equals(Buffer.from(prepared.originalBytes))) {
+    throw new GitPreviewConflictError(
+      "the Git index changed while preparing the commit; review the updated commit preview",
+    );
+  }
+}
+
+async function resolveCommit(root: string, revision: string): Promise<string | null> {
+  return git(root, "rev-parse", "--verify", `${revision}^{commit}`)
+    .then((value) => value.trim(), () => null);
+}
+
+async function ensureTargetRef(
+  runtime: BoardRuntime,
+  targetRef: string,
+  commitSha: string,
+  zeroOid: string,
+): Promise<boolean> {
+  if (await resolveCommit(runtime.repositoryRoot, targetRef)) return true;
+  const currentValue = await git(runtime.repositoryRoot, "rev-parse", "--verify", targetRef)
+    .then((value) => value.trim(), () => null);
+  if (currentValue !== null) return false;
+  await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, zeroOid)
+    .catch(() => undefined);
+  return await resolveCommit(runtime.repositoryRoot, targetRef) !== null;
+}
+
+async function recoverResolvableHead(
+  runtime: BoardRuntime,
+  status: GitStatus,
+  acceptedHead: string,
+  targetRef: string,
+  recoveryCommit: string,
+  zeroOid: string,
+): Promise<void> {
+  if (await resolveCommit(runtime.repositoryRoot, "HEAD")) return;
+
+  if (!status.detached) {
+    const sourceRef = `refs/heads/${status.branch}`;
+    if (await resolveCommit(runtime.repositoryRoot, sourceRef) === acceptedHead) {
+      try {
+        await git(runtime.repositoryRoot, "symbolic-ref", "HEAD", sourceRef);
+        if (await resolveCommit(runtime.repositoryRoot, "HEAD") === acceptedHead) return;
+      } catch {}
+    }
+  }
+
+  if (await ensureTargetRef(runtime, targetRef, recoveryCommit, zeroOid)) {
+    try {
+      await git(runtime.repositoryRoot, "symbolic-ref", "HEAD", targetRef);
+      if (await resolveCommit(runtime.repositoryRoot, "HEAD")) return;
+    } catch {}
+  }
+
+  if (await resolveCommit(runtime.repositoryRoot, "HEAD")) return;
+  await git(
+    runtime.repositoryRoot,
+    "update-ref",
+    "--no-deref",
+    "HEAD",
+    recoveryCommit,
+  );
+  if (await resolveCommit(runtime.repositoryRoot, "HEAD") !== recoveryCommit) {
+    throw new GitError("could not recover HEAD after the failed branch installation");
+  }
+}
+
+const UNSUPPORTED_DIRECTORY_SYNC_CODES = new Set([
+  "EINVAL",
+  "EISDIR",
+  "ENOSYS",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+]);
+
+async function syncGitDirectory(gitDirectory: string): Promise<void> {
+  let handle: FileHandle;
+  try {
+    handle = await open(gitDirectory, "r");
+  } catch (error) {
+    if (
+      UNSUPPORTED_DIRECTORY_SYNC_CODES.has(errorCode(error)) ||
+      (process.platform === "win32" && ["EACCES", "EPERM"].includes(errorCode(error)))
+    ) {
+      return;
+    }
+    throw error;
+  }
+  try {
+    await handle.sync();
+  } catch (error) {
+    if (!UNSUPPORTED_DIRECTORY_SYNC_CODES.has(errorCode(error))) throw error;
+  } finally {
+    await handle.close();
   }
 }
 
@@ -463,48 +989,79 @@ async function installCommit(
   request: CommitRequest,
   head: string,
   commitSha: string,
-  indexInfo: string,
+  indexLock: HeldIndexLock,
 ): Promise<string> {
   const targetBranch = request.branch ?? status.branch;
   const targetRef = `refs/heads/${targetBranch}`;
   const zeroOid = "0".repeat(head.length);
-
-  if (request.branch) {
-    await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, zeroOid);
-    try {
-      await git(runtime.repositoryRoot, "symbolic-ref", "HEAD", targetRef);
-    } catch (error) {
-      await git(runtime.repositoryRoot, "update-ref", "-d", targetRef, commitSha).catch(() => undefined);
-      throw error;
-    }
-  } else {
-    await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, head);
-  }
-
+  let refUpdated = false;
+  let headUpdated = false;
   try {
-    await gitCommand(
-      runtime.repositoryRoot,
-      ["update-index", "-z", "--add", "--index-info"],
-      { stdin: indexInfo },
-    );
-  } catch (error) {
-    const rollback: unknown[] = [];
-    try {
-      if (request.branch) {
-        if (status.detached) {
-          await git(runtime.repositoryRoot, "update-ref", "--no-deref", "HEAD", head);
-        } else {
-          await git(runtime.repositoryRoot, "symbolic-ref", "HEAD", `refs/heads/${status.branch}`);
-        }
-        await git(runtime.repositoryRoot, "update-ref", "-d", targetRef, commitSha);
-      } else {
-        await git(runtime.repositoryRoot, "update-ref", targetRef, head, commitSha);
-      }
-    } catch (rollbackError) {
-      rollback.push(rollbackError);
+    await assertIndexLockOwned(indexLock);
+    if (request.branch) {
+      await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, zeroOid);
+      refUpdated = true;
+      await git(runtime.repositoryRoot, "symbolic-ref", "HEAD", targetRef);
+      headUpdated = true;
+    } else {
+      await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, head);
+      refUpdated = true;
     }
-    if (rollback.length > 0) {
-      throw new AggregateError([error, ...rollback], "commit installation and rollback failed");
+    await assertIndexLockOwned(indexLock);
+    await rename(indexLock.lockPath, indexLock.indexPath);
+    indexLock.published = true;
+    await syncGitDirectory(runtime.gitDirectory);
+  } catch (error) {
+    if (indexLock.published) throw error;
+    const rollbackErrors: unknown[] = [];
+    const currentHeadRef = request.branch
+      ? await git(runtime.repositoryRoot, "rev-parse", "--symbolic-full-name", "HEAD")
+        .then((value) => value.trim(), () => null)
+      : null;
+    const currentHeadCommit = request.branch
+      ? await resolveCommit(runtime.repositoryRoot, "HEAD")
+      : null;
+    const preserveTarget = request.branch !== undefined &&
+      (
+        headUpdated ||
+        currentHeadRef === null ||
+        currentHeadRef === targetRef ||
+        currentHeadCommit === null
+      );
+    if (refUpdated) {
+      try {
+        if (request.branch) {
+          if (preserveTarget) {
+            rollbackErrors.push(new GitError(
+              `did not delete ${targetBranch} because HEAD may depend on it`,
+            ));
+          } else {
+            await git(runtime.repositoryRoot, "update-ref", "-d", targetRef, commitSha);
+          }
+        } else {
+          await git(runtime.repositoryRoot, "update-ref", targetRef, head, commitSha);
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    try {
+      await recoverResolvableHead(
+        runtime,
+        status,
+        head,
+        targetRef,
+        request.branch ? commitSha : head,
+        zeroOid,
+      );
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        "commit installation and rollback failed",
+      );
     }
     throw error;
   }
@@ -564,46 +1121,71 @@ export async function commitPlanningChanges(
       }
     }
 
-    const head = await gitHead(runtime);
+    const head = status.sourceHead;
     const candidate = await buildCommitCandidate(runtime, head, status.changedPlanningFiles);
+    if (candidate.worktreeDigest !== status.worktreeDigest) {
+      throw new GitPreviewConflictError(
+        "working tree changed while capturing the commit; review the updated commit preview",
+      );
+    }
     const headTree = (await git(runtime.repositoryRoot, "rev-parse", `${head}^{tree}`)).trim();
     if (candidate.tree === headTree) {
       throw new GitError("no planning document changes to commit");
     }
-    const latestFiles = await planningGitAllowlist(runtime);
-    const latestStatus = await gitStatus(
-      runtime,
-      new Set([...allowedFiles].filter((file) => latestFiles.has(file))),
-    );
-    if (request.expectedCommitPreviewToken !== latestStatus.commitPreviewToken) {
-      throw new GitPreviewConflictError(
-        "working tree changed; review the updated commit preview",
+    return await withIndexLock(runtime, async (indexLock) => {
+      await assertNoGitOperation(runtime);
+      const latestFiles = await planningGitAllowlist(runtime);
+      const latestStatus = await gitStatus(
+        runtime,
+        new Set([...allowedFiles].filter((file) => latestFiles.has(file))),
       );
-    }
-    await assertNoGitOperation(runtime);
-    const sha = (await git(
-      runtime.repositoryRoot,
-      "commit-tree",
-      candidate.tree,
-      "-p",
-      head,
-      "-m",
-      request.message,
-    )).trim();
-    const branch = await installCommit(
-      runtime,
-      status,
-      request,
-      head,
-      sha,
-      candidate.indexInfo,
-    );
+      if (request.expectedCommitPreviewToken !== latestStatus.commitPreviewToken) {
+        throw new GitPreviewConflictError(
+          "working tree changed; review the updated commit preview",
+        );
+      }
+      const prepared = await prepareLockedIndex(
+        runtime,
+        indexLock,
+        candidate.selectedEntries,
+        head.length,
+      );
+      const finalFiles = await planningGitAllowlist(runtime);
+      const finalStatus = await gitStatus(
+        runtime,
+        new Set([...allowedFiles].filter((file) => finalFiles.has(file))),
+      );
+      if (request.expectedCommitPreviewToken !== finalStatus.commitPreviewToken) {
+        throw new GitPreviewConflictError(
+          "working tree changed; review the updated commit preview",
+        );
+      }
+      await assertNoGitOperation(runtime);
+      await assertIndexUnchanged(indexLock, prepared);
+      const sha = (await git(
+        runtime.repositoryRoot,
+        "commit-tree",
+        candidate.tree,
+        "-p",
+        head,
+        "-m",
+        request.message,
+      )).trim();
+      const branch = await installCommit(
+        runtime,
+        finalStatus,
+        request,
+        head,
+        sha,
+        indexLock,
+      );
 
-    return {
-      branch,
-      sha,
-      files: status.changedPlanningFiles,
-    };
+      return {
+        branch,
+        sha,
+        files: status.changedPlanningFiles,
+      };
+    });
   } finally {
     await lock.release();
   }

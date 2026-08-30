@@ -1,6 +1,18 @@
-import { watch } from "node:fs";
-import { appendFile, lstat, mkdir, readFile, rename, symlink, unlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { unlinkSync, watch, writeFileSync } from "node:fs";
+import {
+  appendFile,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rmdir,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
+import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -77,6 +89,9 @@ describe("Git boundaries", () => {
       changedPlanningFiles: ["plans/moon-garden.md"],
       otherChangedFiles: ["README.md"],
     });
+    const response = await handleApi(runtime, "GET", "/api/git/status", undefined);
+    expect(response.body).not.toHaveProperty("sourceHead");
+    expect(response.body).not.toHaveProperty("worktreeDigest");
   });
 
   it("refuses a stale commit preview before changing the branch or index", async () => {
@@ -112,6 +127,78 @@ describe("Git boundaries", () => {
     expect(staged.changedPlanningFiles).toEqual(unstaged.changedPlanningFiles);
     expect(staged.otherChangedFiles).toEqual(unstaged.otherChangedFiles);
     expect(staged.commitPreviewToken).not.toBe(unstaged.commitPreviewToken);
+  });
+
+  it("invalidates the commit preview when included bytes change with the same Git status", async () => {
+    const { root, runtime } = await changedRuntime();
+    const first = await gitStatus(runtime);
+    await appendFile(path.join(root, "plans", "moon-garden.md"), "Another fictional note.\n");
+    const second = await gitStatus(runtime);
+
+    expect(second.changedPlanningFiles).toEqual(first.changedPlanningFiles);
+    expect(second.otherChangedFiles).toEqual(first.otherChangedFiles);
+    expect(second.commitPreviewToken).not.toBe(first.commitPreviewToken);
+  });
+
+  it("invalidates the commit preview when a staged blob changes with the same Git status", async () => {
+    const { root, runtime } = await changedRuntime();
+    await git(root, "add", "README.md");
+    const first = await gitStatus(runtime);
+    await appendFile(path.join(root, "README.md"), "Another excluded staged note.\n");
+    await git(root, "add", "README.md");
+    const second = await gitStatus(runtime);
+
+    expect(second.changedPlanningFiles).toEqual(first.changedPlanningFiles);
+    expect(second.otherChangedFiles).toEqual(first.otherChangedFiles);
+    expect(second.commitPreviewToken).not.toBe(first.commitPreviewToken);
+  });
+
+  it("rejects bytes captured between equal preview snapshots", async () => {
+    const { root, runtime } = await changedRuntime();
+    const relativePath = "plans/moon-garden.md";
+    const absolutePath = path.join(root, relativePath);
+    const acceptedText = await readFile(absolutePath, "utf8");
+    const transientText = `${acceptedText}\nTransient fictional capture.\n`;
+    const transientOid = createHash("sha1")
+      .update(`blob ${Buffer.byteLength(transientText)}\0`)
+      .update(transientText)
+      .digest("hex");
+    const objectDirectory = path.join(root, ".git", "objects", transientOid.slice(0, 2));
+    await mkdir(objectDirectory, { recursive: true });
+    const repositoryToken = createHash("sha256").update(root).digest("hex").slice(0, 16);
+    const candidatePrefix = `planops-board-commit-${repositoryToken}-`;
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+    let changed = false;
+    let restored = false;
+    const candidateWatcher = watch(tmpdir(), (_event, name) => {
+      if (changed || !String(name).startsWith(candidatePrefix)) return;
+      changed = true;
+      writeFileSync(absolutePath, transientText);
+    });
+    const objectWatcher = watch(objectDirectory, () => {
+      if (!changed || restored) return;
+      restored = true;
+      writeFileSync(absolutePath, acceptedText);
+    });
+
+    try {
+      await expect(commitPlanningChangesWithPreview(runtime, {
+        message: "Must reject transient fictional bytes",
+        branch: "plan/no-transient-capture",
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      })).rejects.toThrow(/working tree changed while capturing the commit/);
+    } finally {
+      candidateWatcher.close();
+      objectWatcher.close();
+      if (changed && !restored) await writeFile(absolutePath, acceptedText);
+    }
+
+    expect(changed).toBe(true);
+    expect(restored).toBe(true);
+    expect(await readFile(absolutePath, "utf8")).toBe(acceptedText);
+    expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+    expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
   });
 
   it("preserves a staged-only planning change when the worktree matches HEAD", async () => {
@@ -249,6 +336,142 @@ describe("Git boundaries", () => {
     expect(await git(root, "ls-tree", "-r", "--name-only", "HEAD", "--", relativePath)).toBe("");
     await expect(readFile(path.join(absolutePath, "excluded.txt"), "utf8"))
       .resolves.toBe("Excluded fictional note.\n");
+  });
+
+  it("rejects a selected file that would replace an excluded tracked directory", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    const selectedPath = "plans/star-map.md";
+    const excludedPath = `${selectedPath}/field-notes.txt`;
+    const selectedText = [
+      "# Star Map plan",
+      "",
+      "| ID | Priority | Status | Dependencies | Required outcome |",
+      "|---|---:|---|---|---|",
+      "| `STM-001` | P2 | Ready | None | Chart the fictional night garden. |",
+      "",
+    ].join("\n");
+    await mkdir(path.join(root, selectedPath));
+    await writeFile(path.join(root, excludedPath), "Fictional field notes.\n");
+    await git(root, "add", excludedPath);
+    await git(root, "commit", "-m", "Add fictional field notes");
+    await unlink(path.join(root, excludedPath));
+    await rmdir(path.join(root, selectedPath));
+    await writeFile(path.join(root, selectedPath), selectedText);
+    const runtime = await loadBoardRuntime({ repo: root });
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+    const indexBefore = await git(root, "ls-files", "--stage", "-z");
+
+    await expect(commitPlanningChangesWithPreview(runtime, {
+      message: "Must not replace excluded history",
+      branch: "plan/no-head-directory-file-conflict",
+      expectedCommitPreviewToken: preview.commitPreviewToken,
+    })).rejects.toThrow(/candidate commit would change excluded path/);
+
+    expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+    expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(root, "ls-files", "--stage", "-z")).toBe(indexBefore);
+    await expect(lstat(path.join(root, ".git", "index.lock"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects a selected file that conflicts with an excluded staged descendant", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    const selectedPath = "plans/glasshouse.md";
+    const excludedPath = `${selectedPath}/draft.txt`;
+    await mkdir(path.join(root, selectedPath));
+    await writeFile(path.join(root, excludedPath), "Excluded staged draft.\n");
+    await git(root, "add", excludedPath);
+    const excludedEntry = await git(root, "ls-files", "--stage", "--", excludedPath);
+    await unlink(path.join(root, excludedPath));
+    await rmdir(path.join(root, selectedPath));
+    await writeFile(path.join(root, selectedPath), [
+      "# Glasshouse plan",
+      "",
+      "| ID | Priority | Status | Dependencies | Required outcome |",
+      "|---|---:|---|---|---|",
+      "| `GLA-001` | P2 | Ready | None | Open the fictional glasshouse. |",
+      "",
+    ].join("\n"));
+    const runtime = await loadBoardRuntime({ repo: root });
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+
+    await expect(commitPlanningChangesWithPreview(runtime, {
+      message: "Must preserve the excluded staged draft",
+      branch: "plan/no-staged-directory-file-conflict",
+      expectedCommitPreviewToken: preview.commitPreviewToken,
+    })).rejects.toThrow(/conflicts with excluded staged path/);
+
+    expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+    expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(root, "ls-files", "--stage", "--", excludedPath)).toBe(excludedEntry);
+    await expect(lstat(path.join(root, ".git", "index.lock"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("preserves an excluded staged descendant when committing a selected deletion", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    const selectedPath = "plans/temporary-studio.md";
+    const excludedPath = `${selectedPath}/private-draft.txt`;
+    await writeFile(path.join(root, selectedPath), [
+      "# Temporary Studio plan",
+      "",
+      "| ID | Priority | Status | Dependencies | Required outcome |",
+      "|---|---:|---|---|---|",
+      "| `TMP-001` | P2 | Ready | None | Open the fictional studio. |",
+      "",
+    ].join("\n"));
+    await git(root, "add", selectedPath);
+    await git(root, "commit", "-m", "Add fictional temporary studio");
+    await unlink(path.join(root, selectedPath));
+    await mkdir(path.join(root, selectedPath));
+    await writeFile(path.join(root, excludedPath), "Excluded staged private draft.\n");
+    await git(root, "add", excludedPath);
+    const excludedEntry = await git(root, "ls-files", "--stage", "--", excludedPath);
+    await unlink(path.join(root, excludedPath));
+    await rmdir(path.join(root, selectedPath));
+    const runtime = await loadBoardRuntime({ repo: root });
+
+    const result = await commitPlanningChanges(runtime, {
+      message: "Remove fictional temporary studio",
+      branch: "plan/remove-temporary-studio",
+    });
+
+    expect(result.files).toContain(selectedPath);
+    expect(await git(root, "diff-tree", "--no-commit-id", "--name-status", "-r", "HEAD"))
+      .toBe(`D\t${selectedPath}`);
+    expect(await git(root, "ls-files", "--stage", "--", excludedPath)).toBe(excludedEntry);
+    expect(await git(root, "diff", "--cached", "--name-only", "--", excludedPath))
+      .toBe(excludedPath);
+    await expect(git(root, "show", `HEAD:./${excludedPath}`)).rejects.toThrow();
+  });
+
+  it("refuses a commit when the real Git index is missing", async () => {
+    const { root, runtime } = await changedRuntime();
+    await unlink(path.join(root, ".git", "index"));
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+
+    await expect(commitPlanningChangesWithPreview(runtime, {
+      message: "Must not recreate a missing index",
+      branch: "plan/no-missing-index",
+      expectedCommitPreviewToken: preview.commitPreviewToken,
+    })).rejects.toThrow(/could not read the Git index/);
+
+    expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+    expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    await expect(lstat(path.join(root, ".git", "index"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(lstat(path.join(root, ".git", "index.lock"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("removes inherited Git control variables", () => {
@@ -520,6 +743,301 @@ describe("Git boundaries", () => {
       )).rejects.toThrow(/lock/);
     } finally {
       await lock.release();
+    }
+  });
+
+  it("does not change refs or the index when another Git operation holds the index lock", async () => {
+    const { root, runtime } = await changedRuntime();
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+    const indexBefore = await readFile(path.join(root, ".git", "index"));
+    const indexLockPath = path.join(root, ".git", "index.lock");
+    await writeFile(indexLockPath, "Fictional lock holder.\n");
+
+    try {
+      await expect(commitPlanningChangesWithPreview(runtime, {
+        message: "Must wait for the Git index lock",
+        branch: "plan/index-already-locked",
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      })).rejects.toThrow(/index is locked/);
+
+      expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+      expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+      expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
+      expect(await readFile(indexLockPath, "utf8")).toBe("Fictional lock holder.\n");
+    } finally {
+      await unlink(indexLockPath);
+    }
+  });
+
+  it("does not remove or publish a replacement for its acquired Git index lock", async () => {
+    const { root, runtime } = await changedRuntime();
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+    const indexBefore = await readFile(path.join(root, ".git", "index"));
+    const indexLockPath = path.join(root, ".git", "index.lock");
+    const replacement = "Replacement fictional lock holder.\n";
+    let finishReplacement = (): void => undefined;
+    let failReplacement = (_error: unknown): void => undefined;
+    const replacementFinished = new Promise<void>((resolve, reject) => {
+      finishReplacement = resolve;
+      failReplacement = reject;
+    });
+    let replacementTimer: ReturnType<typeof setTimeout> | undefined;
+    let replaced = false;
+    const watcher = watch(path.join(root, ".git"), (_event, name) => {
+      if (!String(name).startsWith("planops-board-index-") || replaced) return;
+      replaced = true;
+      void unlink(indexLockPath)
+        .then(() => writeFile(indexLockPath, replacement))
+        .then(finishReplacement, failReplacement);
+    });
+    replacementTimer = setTimeout(
+      () => failReplacement(new Error("the prepared-index directory did not trigger replacement")),
+      2_000,
+    );
+
+    try {
+      await expect(commitPlanningChangesWithPreview(runtime, {
+        message: "Must retain replacement lock ownership",
+        branch: "plan/no-replaced-index-lock",
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      })).rejects.toThrow(/ownership of the Git index lock was lost/);
+      await replacementFinished;
+
+      expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+      expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+      expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
+      expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
+    } finally {
+      if (replacementTimer) clearTimeout(replacementTimer);
+      watcher.close();
+      await unlink(indexLockPath).catch(() => undefined);
+    }
+  });
+
+  it("retains the new branch when the original branch disappears during rollback", async () => {
+    const { root, runtime } = await changedRuntime();
+    const preview = await gitStatus(runtime);
+    const originalHead = await git(root, "rev-parse", "HEAD");
+    const indexBefore = await readFile(path.join(root, ".git", "index"));
+    const indexLockPath = path.join(root, ".git", "index.lock");
+    const originalRefPath = path.join(root, ".git", "refs", "heads", "main");
+    const replacement = "Replacement lock after fictional branch switch.\n";
+    const targetBranch = "plan/preserve-safe-head";
+    let finishReplacement = (): void => undefined;
+    let failReplacement = (_error: unknown): void => undefined;
+    const replacementFinished = new Promise<void>((resolve, reject) => {
+      finishReplacement = resolve;
+      failReplacement = reject;
+    });
+    const replacementTimer = setTimeout(
+      () => failReplacement(new Error("the HEAD switch did not trigger replacement")),
+      2_000,
+    );
+    let replaced = false;
+    const watcher = watch(path.join(root, ".git"), (_event, name) => {
+      if (String(name) !== "HEAD" || replaced) return;
+      replaced = true;
+      try {
+        unlinkSync(originalRefPath);
+        unlinkSync(indexLockPath);
+        writeFileSync(indexLockPath, replacement);
+        finishReplacement();
+      } catch (error) {
+        failReplacement(error);
+      }
+    });
+
+    try {
+      await expect(commitPlanningChangesWithPreview(runtime, {
+        message: "Preserve a resolvable fictional branch",
+        branch: targetBranch,
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      })).rejects.toThrow(/commit installation and rollback failed/);
+      await replacementFinished;
+
+      expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe(targetBranch);
+      const targetHead = await git(root, "rev-parse", `refs/heads/${targetBranch}`);
+      expect(await git(root, "rev-parse", "HEAD")).toBe(targetHead);
+      expect(targetHead).not.toBe(originalHead);
+      await expect(git(root, "rev-parse", "--verify", "refs/heads/main")).rejects.toThrow();
+      expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
+      expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
+    } finally {
+      clearTimeout(replacementTimer);
+      watcher.close();
+      await unlink(indexLockPath).catch(() => undefined);
+    }
+  });
+
+  it("restores the exact source when the new branch ref disappears during rollback", async () => {
+    const { root, runtime } = await changedRuntime();
+    const preview = await gitStatus(runtime);
+    const originalHead = await git(root, "rev-parse", "HEAD");
+    const indexBefore = await readFile(path.join(root, ".git", "index"));
+    const indexLockPath = path.join(root, ".git", "index.lock");
+    const targetBranch = "plan/recreate-safe-head";
+    const targetRefPath = path.join(root, ".git", "refs", "heads", ...targetBranch.split("/"));
+    const replacement = "Replacement lock after fictional target removal.\n";
+    let finishReplacement = (): void => undefined;
+    let failReplacement = (_error: unknown): void => undefined;
+    const replacementFinished = new Promise<void>((resolve, reject) => {
+      finishReplacement = resolve;
+      failReplacement = reject;
+    });
+    const replacementTimer = setTimeout(
+      () => failReplacement(new Error("the HEAD switch did not trigger target removal")),
+      2_000,
+    );
+    let replaced = false;
+    const watcher = watch(path.join(root, ".git"), (_event, name) => {
+      if (String(name) !== "HEAD" || replaced) return;
+      replaced = true;
+      try {
+        unlinkSync(targetRefPath);
+        unlinkSync(indexLockPath);
+        writeFileSync(indexLockPath, replacement);
+        finishReplacement();
+      } catch (error) {
+        failReplacement(error);
+      }
+    });
+
+    try {
+      await expect(commitPlanningChangesWithPreview(runtime, {
+        message: "Recreate a resolvable fictional branch",
+        branch: targetBranch,
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      })).rejects.toThrow(/commit installation and rollback failed/);
+      await replacementFinished;
+
+      expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+      expect(await git(root, "rev-parse", "HEAD")).toBe(originalHead);
+      await expect(git(root, "rev-parse", `refs/heads/${targetBranch}`)).rejects.toThrow();
+      expect(await git(root, "rev-parse", "refs/heads/main")).toBe(originalHead);
+      expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
+      expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
+    } finally {
+      clearTimeout(replacementTimer);
+      watcher.close();
+      await unlink(indexLockPath).catch(() => undefined);
+    }
+  });
+
+  it("detaches HEAD without overwriting a concurrent non-commit target ref", async () => {
+    const { root, runtime } = await changedRuntime();
+    const blobSourcePath = path.join(root, "fictional-blob-source.txt");
+    await writeFile(blobSourcePath, "Concurrent fictional blob value.\n");
+    const blobOid = await git(root, "hash-object", "-w", "--", blobSourcePath);
+    await unlink(blobSourcePath);
+    const preview = await gitStatus(runtime);
+    const originalHead = await git(root, "rev-parse", "HEAD");
+    const indexBefore = await readFile(path.join(root, ".git", "index"));
+    const indexLockPath = path.join(root, ".git", "index.lock");
+    const sourceRefPath = path.join(root, ".git", "refs", "heads", "main");
+    const targetBranch = "plan/detach-safe-head";
+    const targetRefPath = path.join(root, ".git", "refs", "heads", ...targetBranch.split("/"));
+    const replacement = "Replacement lock beside concurrent fictional blob ref.\n";
+    let finishReplacement = (): void => undefined;
+    let failReplacement = (_error: unknown): void => undefined;
+    const replacementFinished = new Promise<void>((resolve, reject) => {
+      finishReplacement = resolve;
+      failReplacement = reject;
+    });
+    const replacementTimer = setTimeout(
+      () => failReplacement(new Error("the HEAD switch did not trigger invalid-ref recovery")),
+      2_000,
+    );
+    let replaced = false;
+    const watcher = watch(path.join(root, ".git"), (_event, name) => {
+      if (String(name) !== "HEAD" || replaced) return;
+      replaced = true;
+      try {
+        unlinkSync(sourceRefPath);
+        writeFileSync(targetRefPath, `${blobOid}\n`);
+        unlinkSync(indexLockPath);
+        writeFileSync(indexLockPath, replacement);
+        finishReplacement();
+      } catch (error) {
+        failReplacement(error);
+      }
+    });
+
+    try {
+      await expect(commitPlanningChangesWithPreview(runtime, {
+        message: "Detach to a resolvable fictional commit",
+        branch: targetBranch,
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      })).rejects.toThrow(/commit installation and rollback failed/);
+      await replacementFinished;
+
+      expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD");
+      const recoveredHead = await git(root, "rev-parse", "HEAD");
+      expect(recoveredHead).not.toBe(originalHead);
+      expect(await git(root, "cat-file", "-t", recoveredHead)).toBe("commit");
+      expect(await git(root, "rev-parse", `refs/heads/${targetBranch}`)).toBe(blobOid);
+      await expect(git(root, "rev-parse", `refs/heads/${targetBranch}^{commit}`)).rejects.toThrow();
+      await expect(git(root, "rev-parse", "--verify", "refs/heads/main")).rejects.toThrow();
+      expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
+      expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
+    } finally {
+      clearTimeout(replacementTimer);
+      watcher.close();
+      await unlink(indexLockPath).catch(() => undefined);
+    }
+  });
+
+  it("recreates an existing branch at the accepted commit when rollback finds it missing", async () => {
+    const { root, runtime } = await changedRuntime();
+    const branch = "fictional-work";
+    await git(root, "checkout", "-b", branch);
+    const preview = await gitStatus(runtime);
+    const acceptedHead = await git(root, "rev-parse", "HEAD");
+    const indexBefore = await readFile(path.join(root, ".git", "index"));
+    const indexLockPath = path.join(root, ".git", "index.lock");
+    const branchRefPath = path.join(root, ".git", "refs", "heads", branch);
+    const replacement = "Replacement lock after fictional existing branch removal.\n";
+    let finishReplacement = (): void => undefined;
+    let failReplacement = (_error: unknown): void => undefined;
+    const replacementFinished = new Promise<void>((resolve, reject) => {
+      finishReplacement = resolve;
+      failReplacement = reject;
+    });
+    const replacementTimer = setTimeout(
+      () => failReplacement(new Error("the existing branch update did not trigger removal")),
+      2_000,
+    );
+    let replaced = false;
+    const watcher = watch(path.dirname(branchRefPath), (_event, name) => {
+      if (String(name) !== branch || replaced) return;
+      replaced = true;
+      try {
+        unlinkSync(branchRefPath);
+        unlinkSync(indexLockPath);
+        writeFileSync(indexLockPath, replacement);
+        finishReplacement();
+      } catch (error) {
+        failReplacement(error);
+      }
+    });
+
+    try {
+      await expect(commitPlanningChangesWithPreview(runtime, {
+        message: "Recover a resolvable fictional existing branch",
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      })).rejects.toThrow(/commit installation and rollback failed/);
+      await replacementFinished;
+
+      expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branch);
+      expect(await git(root, "rev-parse", "HEAD")).toBe(acceptedHead);
+      expect(await git(root, "rev-parse", `refs/heads/${branch}`)).toBe(acceptedHead);
+      expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
+      expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
+    } finally {
+      clearTimeout(replacementTimer);
+      watcher.close();
+      await unlink(indexLockPath).catch(() => undefined);
     }
   });
 

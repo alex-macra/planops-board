@@ -30,6 +30,7 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: false,
     timeout: 60_000,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
     env: { BOARD_E2E_PORT: String(e2ePort) },
   },
 });
