@@ -309,6 +309,7 @@ export interface CommitResult {
 
 export interface CommitOptions {
   readonly lock?: LockOptions;
+  readonly beforeIndexPublish?: () => void | Promise<void>;
 }
 
 export function suggestedBranchName(date = new Date()): string {
@@ -990,6 +991,7 @@ async function installCommit(
   head: string,
   commitSha: string,
   indexLock: HeldIndexLock,
+  beforeIndexPublish?: () => void | Promise<void>,
 ): Promise<string> {
   const targetBranch = request.branch ?? status.branch;
   const targetRef = `refs/heads/${targetBranch}`;
@@ -1007,6 +1009,7 @@ async function installCommit(
       await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, head);
       refUpdated = true;
     }
+    if (beforeIndexPublish) await beforeIndexPublish();
     await assertIndexLockOwned(indexLock);
     await rename(indexLock.lockPath, indexLock.indexPath);
     indexLock.published = true;
@@ -1178,6 +1181,7 @@ export async function commitPlanningChanges(
         head,
         sha,
         indexLock,
+        options.beforeIndexPublish,
       );
 
       return {

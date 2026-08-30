@@ -825,37 +825,19 @@ describe("Git boundaries", () => {
     const originalRefPath = path.join(root, ".git", "refs", "heads", "main");
     const replacement = "Replacement lock after fictional branch switch.\n";
     const targetBranch = "plan/preserve-safe-head";
-    let finishReplacement = (): void => undefined;
-    let failReplacement = (_error: unknown): void => undefined;
-    const replacementFinished = new Promise<void>((resolve, reject) => {
-      finishReplacement = resolve;
-      failReplacement = reject;
-    });
-    const replacementTimer = setTimeout(
-      () => failReplacement(new Error("the HEAD switch did not trigger replacement")),
-      2_000,
-    );
-    let replaced = false;
-    const watcher = watch(path.join(root, ".git"), (_event, name) => {
-      if (String(name) !== "HEAD" || replaced) return;
-      replaced = true;
-      try {
-        unlinkSync(originalRefPath);
-        unlinkSync(indexLockPath);
-        writeFileSync(indexLockPath, replacement);
-        finishReplacement();
-      } catch (error) {
-        failReplacement(error);
-      }
-    });
 
     try {
       await expect(commitPlanningChangesWithPreview(runtime, {
         message: "Preserve a resolvable fictional branch",
         branch: targetBranch,
         expectedCommitPreviewToken: preview.commitPreviewToken,
+      }, {
+        beforeIndexPublish: async () => {
+          await unlink(originalRefPath);
+          await unlink(indexLockPath);
+          await writeFile(indexLockPath, replacement);
+        },
       })).rejects.toThrow(/commit installation and rollback failed/);
-      await replacementFinished;
 
       expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe(targetBranch);
       const targetHead = await git(root, "rev-parse", `refs/heads/${targetBranch}`);
@@ -865,8 +847,6 @@ describe("Git boundaries", () => {
       expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
       expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
     } finally {
-      clearTimeout(replacementTimer);
-      watcher.close();
       await unlink(indexLockPath).catch(() => undefined);
     }
   });
@@ -880,37 +860,19 @@ describe("Git boundaries", () => {
     const targetBranch = "plan/recreate-safe-head";
     const targetRefPath = path.join(root, ".git", "refs", "heads", ...targetBranch.split("/"));
     const replacement = "Replacement lock after fictional target removal.\n";
-    let finishReplacement = (): void => undefined;
-    let failReplacement = (_error: unknown): void => undefined;
-    const replacementFinished = new Promise<void>((resolve, reject) => {
-      finishReplacement = resolve;
-      failReplacement = reject;
-    });
-    const replacementTimer = setTimeout(
-      () => failReplacement(new Error("the HEAD switch did not trigger target removal")),
-      2_000,
-    );
-    let replaced = false;
-    const watcher = watch(path.join(root, ".git"), (_event, name) => {
-      if (String(name) !== "HEAD" || replaced) return;
-      replaced = true;
-      try {
-        unlinkSync(targetRefPath);
-        unlinkSync(indexLockPath);
-        writeFileSync(indexLockPath, replacement);
-        finishReplacement();
-      } catch (error) {
-        failReplacement(error);
-      }
-    });
 
     try {
       await expect(commitPlanningChangesWithPreview(runtime, {
         message: "Recreate a resolvable fictional branch",
         branch: targetBranch,
         expectedCommitPreviewToken: preview.commitPreviewToken,
+      }, {
+        beforeIndexPublish: async () => {
+          await unlink(targetRefPath);
+          await unlink(indexLockPath);
+          await writeFile(indexLockPath, replacement);
+        },
       })).rejects.toThrow(/commit installation and rollback failed/);
-      await replacementFinished;
 
       expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
       expect(await git(root, "rev-parse", "HEAD")).toBe(originalHead);
@@ -919,8 +881,6 @@ describe("Git boundaries", () => {
       expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
       expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
     } finally {
-      clearTimeout(replacementTimer);
-      watcher.close();
       await unlink(indexLockPath).catch(() => undefined);
     }
   });
@@ -938,40 +898,21 @@ describe("Git boundaries", () => {
     const sourceRefPath = path.join(root, ".git", "refs", "heads", "main");
     const targetBranch = "plan/detach-safe-head";
     const targetRefPath = path.join(root, ".git", "refs", "heads", ...targetBranch.split("/"));
-    await mkdir(path.dirname(targetRefPath), { recursive: true });
     const replacement = "Replacement lock beside concurrent fictional blob ref.\n";
-    let finishReplacement = (): void => undefined;
-    let failReplacement = (_error: unknown): void => undefined;
-    const replacementFinished = new Promise<void>((resolve, reject) => {
-      finishReplacement = resolve;
-      failReplacement = reject;
-    });
-    const replacementTimer = setTimeout(
-      () => failReplacement(new Error("the HEAD switch did not trigger invalid-ref recovery")),
-      2_000,
-    );
-    let replaced = false;
-    const watcher = watch(path.dirname(targetRefPath), (_event, name) => {
-      if (String(name) !== path.basename(targetRefPath) || replaced) return;
-      replaced = true;
-      try {
-        unlinkSync(sourceRefPath);
-        writeFileSync(targetRefPath, `${blobOid}\n`);
-        unlinkSync(indexLockPath);
-        writeFileSync(indexLockPath, replacement);
-        finishReplacement();
-      } catch (error) {
-        failReplacement(error);
-      }
-    });
 
     try {
       await expect(commitPlanningChangesWithPreview(runtime, {
         message: "Detach to a resolvable fictional commit",
         branch: targetBranch,
         expectedCommitPreviewToken: preview.commitPreviewToken,
+      }, {
+        beforeIndexPublish: async () => {
+          await unlink(sourceRefPath);
+          await writeFile(targetRefPath, `${blobOid}\n`);
+          await unlink(indexLockPath);
+          await writeFile(indexLockPath, replacement);
+        },
       })).rejects.toThrow(/commit installation and rollback failed/);
-      await replacementFinished;
 
       expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD");
       const recoveredHead = await git(root, "rev-parse", "HEAD");
@@ -983,8 +924,6 @@ describe("Git boundaries", () => {
       expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
       expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
     } finally {
-      clearTimeout(replacementTimer);
-      watcher.close();
       await unlink(indexLockPath).catch(() => undefined);
     }
   });
@@ -999,36 +938,18 @@ describe("Git boundaries", () => {
     const indexLockPath = path.join(root, ".git", "index.lock");
     const branchRefPath = path.join(root, ".git", "refs", "heads", branch);
     const replacement = "Replacement lock after fictional existing branch removal.\n";
-    let finishReplacement = (): void => undefined;
-    let failReplacement = (_error: unknown): void => undefined;
-    const replacementFinished = new Promise<void>((resolve, reject) => {
-      finishReplacement = resolve;
-      failReplacement = reject;
-    });
-    const replacementTimer = setTimeout(
-      () => failReplacement(new Error("the existing branch update did not trigger removal")),
-      2_000,
-    );
-    let replaced = false;
-    const watcher = watch(path.dirname(branchRefPath), (_event, name) => {
-      if (String(name) !== branch || replaced) return;
-      replaced = true;
-      try {
-        unlinkSync(branchRefPath);
-        unlinkSync(indexLockPath);
-        writeFileSync(indexLockPath, replacement);
-        finishReplacement();
-      } catch (error) {
-        failReplacement(error);
-      }
-    });
 
     try {
       await expect(commitPlanningChangesWithPreview(runtime, {
         message: "Recover a resolvable fictional existing branch",
         expectedCommitPreviewToken: preview.commitPreviewToken,
+      }, {
+        beforeIndexPublish: async () => {
+          await unlink(branchRefPath);
+          await unlink(indexLockPath);
+          await writeFile(indexLockPath, replacement);
+        },
       })).rejects.toThrow(/commit installation and rollback failed/);
-      await replacementFinished;
 
       expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branch);
       expect(await git(root, "rev-parse", "HEAD")).toBe(acceptedHead);
@@ -1036,8 +957,6 @@ describe("Git boundaries", () => {
       expect(await readFile(path.join(root, ".git", "index"))).toEqual(indexBefore);
       expect(await readFile(indexLockPath, "utf8")).toBe(replacement);
     } finally {
-      clearTimeout(replacementTimer);
-      watcher.close();
       await unlink(indexLockPath).catch(() => undefined);
     }
   });
