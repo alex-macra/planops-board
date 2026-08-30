@@ -93,6 +93,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
     lastChanged,
     live,
     behind,
+    writing,
     refreshedAt,
     checkedAt,
     reload,
@@ -427,10 +428,12 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           git={git}
           touched={touched}
           undoable={undoable}
+          settling={loading || writing || behind}
           onUndo={undoLast}
+          onRefresh={reload}
           onCommitted={() => {
             clearTouched();
-            void reload();
+            return reload();
           }}
         />
       ) : null}

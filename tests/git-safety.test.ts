@@ -1,18 +1,21 @@
-import { appendFile, mkdir, readFile, rename, symlink, unlink, writeFile } from "node:fs/promises";
+import { watch } from "node:fs";
+import { appendFile, lstat, mkdir, readFile, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { handleApi } from "../server/api.ts";
 import {
-  commitPlanningChanges,
+  commitPlanningChanges as commitPlanningChangesWithPreview,
+  type CommitOptions,
+  type CommitRequest,
   GitError,
   gitStatus,
 } from "../server/git.ts";
 import { sanitizedGitEnvironment } from "../server/git-command.ts";
 import { taskHistory } from "../server/history.ts";
 import { acquireLedgerLock, lockPathFor } from "../server/ledger/lock.ts";
-import { loadBoardRuntime } from "../server/runtime.ts";
+import { loadBoardRuntime, type BoardRuntime } from "../server/runtime.ts";
 import { disposableDemo, git, removeDisposableDemo } from "./fixture.ts";
 
 const roots: string[] = [];
@@ -27,6 +30,19 @@ async function changedRuntime() {
   await appendFile(path.join(root, "plans", "moon-garden.md"), "\nFictional follow-up.\n");
   await appendFile(path.join(root, "README.md"), "\nUnrelated local note.\n");
   return { root, runtime: await loadBoardRuntime({ repo: root }) };
+}
+
+async function commitPlanningChanges(
+  runtime: BoardRuntime,
+  request: Omit<CommitRequest, "expectedCommitPreviewToken">,
+  options: CommitOptions = {},
+) {
+  const preview = await gitStatus(runtime);
+  return commitPlanningChangesWithPreview(
+    runtime,
+    { ...request, expectedCommitPreviewToken: preview.commitPreviewToken },
+    options,
+  );
 }
 
 async function withGitRedirects<T>(operation: () => Promise<T>): Promise<T> {
@@ -57,9 +73,182 @@ describe("Git boundaries", () => {
     expect(status).toMatchObject({
       branch: "main",
       onProtectedBranch: true,
+      commitEnabled: true,
       changedPlanningFiles: ["plans/moon-garden.md"],
       otherChangedFiles: ["README.md"],
     });
+  });
+
+  it("refuses a stale commit preview before changing the branch or index", async () => {
+    const { root, runtime } = await changedRuntime();
+    await git(root, "add", "README.md");
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+    await writeFile(path.join(root, "field-notes.txt"), "Unrelated fictional notes.\n");
+
+    const response = await handleApi(runtime, "POST", "/api/git/commit", {
+      taskIds: [],
+      message: "Update fictional plan",
+      branch: "plan/stale-preview",
+      expectedCommitPreviewToken: preview.commitPreviewToken,
+    });
+
+    expect(response).toMatchObject({
+      status: 409,
+      body: { kind: "conflict", error: expect.stringMatching(/updated commit preview/) },
+    });
+    expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+    expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(root, "diff", "--cached", "--name-only")).toBe("README.md");
+  });
+
+  it("invalidates the commit preview when excluded staging state changes", async () => {
+    const { root, runtime } = await changedRuntime();
+    const unstaged = await gitStatus(runtime);
+
+    await git(root, "add", "README.md");
+    const staged = await gitStatus(runtime);
+
+    expect(staged.changedPlanningFiles).toEqual(unstaged.changedPlanningFiles);
+    expect(staged.otherChangedFiles).toEqual(unstaged.otherChangedFiles);
+    expect(staged.commitPreviewToken).not.toBe(unstaged.commitPreviewToken);
+  });
+
+  it("preserves a staged-only planning change when the worktree matches HEAD", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    const runtime = await loadBoardRuntime({ repo: root });
+    const relativePath = "plans/moon-garden.md";
+    const absolutePath = path.join(root, relativePath);
+    const original = await readFile(absolutePath, "utf8");
+    await writeFile(absolutePath, `${original}\nStaged fictional note.\n`);
+    await git(root, "add", relativePath);
+    await writeFile(absolutePath, original);
+    const preview = await gitStatus(runtime);
+    const stagedBefore = await git(root, "diff", "--cached", "--", relativePath);
+    const headBefore = await git(root, "rev-parse", "HEAD");
+
+    await expect(commitPlanningChangesWithPreview(runtime, {
+      message: "Must not create an empty commit",
+      branch: "plan/no-empty-commit",
+      expectedCommitPreviewToken: preview.commitPreviewToken,
+    })).rejects.toThrow(/no planning document changes/);
+
+    expect(await git(root, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(root, "diff", "--cached", "--", relativePath)).toBe(stagedBefore);
+  });
+
+  it("refuses to commit while a merge conflict is in progress", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    const relativePath = "plans/moon-garden.md";
+    const absolutePath = path.join(root, relativePath);
+    const original = await readFile(absolutePath, "utf8");
+    const originalNote = "The empty-state wording still needs a final review.";
+    await git(root, "checkout", "-b", "fictional-side");
+    await writeFile(absolutePath, original.replace(originalNote, "The side branch reviewed the empty state."));
+    await git(root, "add", relativePath);
+    await git(root, "commit", "-m", "Edit fictional side branch");
+    await git(root, "checkout", "main");
+    await writeFile(absolutePath, original.replace(originalNote, "The main branch reviewed the empty state."));
+    await git(root, "add", relativePath);
+    await git(root, "commit", "-m", "Edit fictional main branch");
+    await expect(git(root, "merge", "fictional-side")).rejects.toThrow();
+    const runtime = await loadBoardRuntime({ repo: root });
+    const preview = await gitStatus(runtime);
+    const head = await git(root, "rev-parse", "HEAD");
+
+    await expect(commitPlanningChangesWithPreview(runtime, {
+      message: "Must not bypass the merge conflict",
+      branch: "plan/no-conflict-commit",
+      expectedCommitPreviewToken: preview.commitPreviewToken,
+    })).rejects.toThrow(/index has conflicts|operation is in progress/);
+
+    expect(await git(root, "rev-parse", "HEAD")).toBe(head);
+    expect(await git(root, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(root, "ls-files", "--unmerged")).not.toBe("");
+  });
+
+  it("commits the captured regular file when its path becomes a symlink during branch install", async () => {
+    const { root, runtime } = await changedRuntime();
+    const relativePath = "plans/moon-garden.md";
+    const absolutePath = path.join(root, relativePath);
+    const preview = await gitStatus(runtime);
+    let finishSwap = (): void => undefined;
+    let failSwap = (_error: unknown): void => undefined;
+    let swapTimer: ReturnType<typeof setTimeout> | undefined;
+    const swapFinished = new Promise<void>((resolve, reject) => {
+      finishSwap = resolve;
+      failSwap = reject;
+      swapTimer = setTimeout(() => reject(new Error("the branch switch did not trigger the swap")), 2_000);
+    });
+    let swapped = false;
+    const watcher = watch(path.join(root, ".git"), (_event, name) => {
+      if (String(name) !== "HEAD" || swapped) return;
+      swapped = true;
+      void unlink(absolutePath)
+        .then(() => symlink("../README.md", absolutePath))
+        .then(finishSwap, failSwap);
+    });
+
+    try {
+      await commitPlanningChangesWithPreview(runtime, {
+        message: "Commit captured fictional plan",
+        branch: "plan/captured-regular-file",
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      });
+      await swapFinished;
+    } finally {
+      if (swapTimer) clearTimeout(swapTimer);
+      watcher.close();
+    }
+
+    expect(swapped).toBe(true);
+    expect((await git(root, "ls-tree", "HEAD", "--", relativePath))).toMatch(/^100644 /);
+    expect(await git(root, "show", `HEAD:./${relativePath}`)).toContain("Fictional follow-up.");
+    expect((await lstat(absolutePath)).isSymbolicLink()).toBe(true);
+  });
+
+  it("does not recurse when a captured deletion becomes a directory during branch install", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    const runtime = await loadBoardRuntime({ repo: root });
+    const relativePath = "plans/moon-garden.md";
+    const absolutePath = path.join(root, relativePath);
+    await unlink(absolutePath);
+    const preview = await gitStatus(runtime);
+    let finishSwap = (): void => undefined;
+    let failSwap = (_error: unknown): void => undefined;
+    let swapTimer: ReturnType<typeof setTimeout> | undefined;
+    const swapFinished = new Promise<void>((resolve, reject) => {
+      finishSwap = resolve;
+      failSwap = reject;
+      swapTimer = setTimeout(() => reject(new Error("the branch switch did not trigger the swap")), 2_000);
+    });
+    const watcher = watch(path.join(root, ".git"), (_event, name) => {
+      if (String(name) !== "HEAD") return;
+      watcher.close();
+      void mkdir(absolutePath)
+        .then(() => writeFile(path.join(absolutePath, "excluded.txt"), "Excluded fictional note.\n"))
+        .then(finishSwap, failSwap);
+    });
+
+    try {
+      await commitPlanningChangesWithPreview(runtime, {
+        message: "Remove captured fictional plan",
+        branch: "plan/captured-deletion",
+        expectedCommitPreviewToken: preview.commitPreviewToken,
+      });
+      await swapFinished;
+    } finally {
+      if (swapTimer) clearTimeout(swapTimer);
+      watcher.close();
+    }
+
+    expect(await git(root, "ls-tree", "-r", "--name-only", "HEAD", "--", relativePath)).toBe("");
+    await expect(readFile(path.join(absolutePath, "excluded.txt"), "utf8"))
+      .resolves.toBe("Excluded fictional note.\n");
   });
 
   it("removes inherited Git control variables", () => {
@@ -153,6 +342,30 @@ describe("Git boundaries", () => {
     expect(result.files).toEqual([relativePath]);
     expect(await git(root, "show", "--pretty=format:", "--name-only", "HEAD")).toBe(relativePath);
     expect(await git(root, "status", "--porcelain")).toBe("");
+  });
+
+  it("keeps Git text normalization semantics for captured Markdown", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    await writeFile(path.join(root, ".gitattributes"), "*.md text eol=lf\n");
+    await git(root, "add", ".gitattributes");
+    await git(root, "commit", "-m", "Normalize fictional Markdown");
+    const relativePath = "plans/moon-garden.md";
+    const absolutePath = path.join(root, relativePath);
+    const original = await readFile(absolutePath, "utf8");
+    await writeFile(
+      absolutePath,
+      `${original}\nFictional normalized note.\n`.replaceAll("\n", "\r\n"),
+    );
+    const runtime = await loadBoardRuntime({ repo: root });
+
+    await commitPlanningChanges(runtime, {
+      message: "Commit normalized fictional Markdown",
+      branch: "plan/normalized-markdown",
+    });
+
+    expect((await git(root, "show", `HEAD:./${relativePath}`))).not.toContain("\r");
+    expect((await gitStatus(runtime)).changedPlanningFiles).toEqual([]);
   });
 
   it("treats configured file names as literal Git pathspecs", async () => {
@@ -375,6 +588,7 @@ describe("Git boundaries", () => {
     config.git.commitEnabled = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     const runtime = await loadBoardRuntime({ repo: root });
+    await expect(gitStatus(runtime)).resolves.toMatchObject({ commitEnabled: false });
     await expect(
       commitPlanningChanges(runtime, {
         message: "Update fictional plan",

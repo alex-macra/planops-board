@@ -69,6 +69,12 @@ test("edits, undoes, annotates, branches, and commits a fictional task", async (
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  const commitPanel = page.getByRole("region", { name: "Commit changes" });
+  await expect(commitPanel.getByText("1 Markdown path included")).toBeVisible();
+  await expect(commitPanel.getByText("1 dirty path excluded")).toBeVisible();
+  await commitPanel.getByText("Commit preview", { exact: true }).click();
+  await expect(commitPanel.getByText("plans/moon-garden.md", { exact: true })).toBeVisible();
+  await expect(commitPanel.getByText("README.md", { exact: true })).toBeVisible();
   await page.getByLabel("New branch").fill("plan/browser-journey");
   await page.getByLabel("Commit message (optional)").fill("Exercise the fictional browser journey");
   const commitRequest = page.waitForResponse(
@@ -83,5 +89,7 @@ test("edits, undoes, annotates, branches, and commits a fictional task", async (
   expect(await gitStatus.json()).toMatchObject({
     branch: "plan/browser-journey",
     changedPlanningFiles: [],
+    otherChangedFiles: ["README.md"],
   });
+  await expect(commitPanel.getByText("No configured Markdown changes to commit.")).toBeVisible();
 });

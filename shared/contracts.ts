@@ -199,9 +199,11 @@ export const gitStatusSchema = z.object({
   branch: z.string(),
   detached: z.boolean(),
   onProtectedBranch: z.boolean(),
+  commitEnabled: z.boolean(),
   changedPlanningFiles: stringList,
   otherChangedFiles: stringList,
   fingerprint: z.string(),
+  commitPreviewToken: z.string().regex(/^[a-f0-9]{64}$/),
   suggestedBranch: z.string(),
 }).readonly();
 export type GitStatusResponse = z.infer<typeof gitStatusSchema>;

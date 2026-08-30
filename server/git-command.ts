@@ -21,6 +21,8 @@ export interface GitCommandOptions {
   readonly maxBuffer?: number;
   readonly authorDate?: string;
   readonly committerDate?: string;
+  readonly indexFile?: string;
+  readonly stdin?: string | Uint8Array;
 }
 
 export function sanitizedGitEnvironment(
@@ -38,12 +40,13 @@ export function runGitCommand(
 ): Promise<GitCommandResult> {
   const environment = sanitizedGitEnvironment();
   environment.GIT_LITERAL_PATHSPECS = "1";
+  if (options.indexFile !== undefined) environment.GIT_INDEX_FILE = options.indexFile;
   if (options.authorDate !== undefined) environment.GIT_AUTHOR_DATE = options.authorDate;
   if (options.committerDate !== undefined) {
     environment.GIT_COMMITTER_DATE = options.committerDate;
   }
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       "git",
       [...HARDENED_GIT_OPTIONS, ...args],
       {
@@ -61,5 +64,6 @@ export function runGitCommand(
         resolve({ stdout, stderr });
       },
     );
+    if (options.stdin !== undefined) child.stdin?.end(options.stdin);
   });
 }

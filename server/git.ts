@@ -1,11 +1,17 @@
 import { createHash } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { runGitCommand } from "./git-command.ts";
+import { runGitCommand, type GitCommandOptions } from "./git-command.ts";
+import { sha256 } from "./ledger/corpus.ts";
 import { acquireLedgerLock, type LockOptions } from "./ledger/lock.ts";
+import type { SourceDocument } from "./ledger/model.ts";
+import { validatePlanningDocuments } from "./ledger/validate.ts";
 import { validateRuntime } from "./ledger/write.ts";
 import {
+  assertSafeRepositoryFile,
   assertSafeRepositoryDirectory,
   discoverPlanningDocuments,
   matchesPlanningDocumentPath,
@@ -17,18 +23,26 @@ export class GitError extends Error {
   override readonly name = "GitError";
 }
 
+export class GitPreviewConflictError extends GitError {}
+
 export interface GitStatus {
   readonly branch: string;
   readonly detached: boolean;
   readonly onProtectedBranch: boolean;
+  readonly commitEnabled: boolean;
   readonly changedPlanningFiles: readonly string[];
   readonly otherChangedFiles: readonly string[];
   readonly fingerprint: string;
+  readonly commitPreviewToken: string;
 }
 
-async function git(root: string, ...args: string[]): Promise<string> {
+async function gitCommand(
+  root: string,
+  args: readonly string[],
+  options: GitCommandOptions = {},
+): Promise<string> {
   try {
-    const { stdout } = await runGitCommand(root, args);
+    const { stdout } = await runGitCommand(root, args, options);
     return stdout;
   } catch (error) {
     const stderr =
@@ -37,6 +51,25 @@ async function git(root: string, ...args: string[]): Promise<string> {
         : String(error);
     throw new GitError(stderr.trim() || `git ${args[0]} failed`);
   }
+}
+
+async function git(root: string, ...args: string[]): Promise<string> {
+  return gitCommand(root, args);
+}
+
+function modesByPath(output: string): Map<string, Set<string>> {
+  const entries = new Map<string, Set<string>>();
+  for (const record of output.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab === -1) continue;
+    const [mode] = record.slice(0, tab).split(" ");
+    const relativePath = record.slice(tab + 1);
+    if (!mode || !relativePath) continue;
+    const modes = entries.get(relativePath) ?? new Set<string>();
+    modes.add(mode);
+    entries.set(relativePath, modes);
+  }
+  return entries;
 }
 
 function changedPaths(porcelain: string): string[] {
@@ -69,20 +102,6 @@ export async function planningGitAllowlist(
     git(runtime.repositoryRoot, "ls-files", "--cached", "--stage", "-z"),
     git(runtime.repositoryRoot, "ls-tree", "-r", "-z", "HEAD"),
   ]);
-  const modesByPath = (output: string): Map<string, Set<string>> => {
-    const entries = new Map<string, Set<string>>();
-    for (const record of output.split("\0")) {
-      const tab = record.indexOf("\t");
-      if (tab === -1) continue;
-      const [mode] = record.slice(0, tab).split(" ");
-      const relativePath = record.slice(tab + 1);
-      if (!mode || !relativePath) continue;
-      const modes = entries.get(relativePath) ?? new Set<string>();
-      modes.add(mode);
-      entries.set(relativePath, modes);
-    }
-    return entries;
-  };
   const indexModes = modesByPath(indexEntries);
   const headModes = modesByPath(headEntries);
   const candidates = new Set([...indexModes.keys(), ...headModes.keys()]);
@@ -142,6 +161,7 @@ export async function gitStatus(
     "-z",
     "--untracked-files=all",
   );
+  const head = await git(runtime.repositoryRoot, "rev-parse", "HEAD");
 
   const changed = new Set<string>();
   const other = new Set<string>();
@@ -155,10 +175,23 @@ export async function gitStatus(
     branch,
     detached,
     onProtectedBranch: runtime.config.git.protectedBranches.includes(branch),
+    commitEnabled: runtime.config.git.commitEnabled,
     changedPlanningFiles,
     otherChangedFiles,
     fingerprint: createHash("sha256")
       .update(`${branch}\n${changedPlanningFiles.join("\n")}`)
+      .digest("hex"),
+    commitPreviewToken: createHash("sha256")
+      .update("v1\0")
+      .update(head.trim())
+      .update("\0branch\0")
+      .update(branch)
+      .update("\0included\0")
+      .update(changedPlanningFiles.join("\0"))
+      .update("\0excluded\0")
+      .update(otherChangedFiles.join("\0"))
+      .update("\0porcelain\0")
+      .update(porcelain)
       .digest("hex"),
   };
 }
@@ -180,6 +213,7 @@ export async function gitFingerprint(
 
 export interface CommitRequest {
   readonly message: string;
+  readonly expectedCommitPreviewToken: string;
   readonly branch?: string;
 }
 
@@ -202,6 +236,281 @@ async function validateBranch(root: string, branch: string): Promise<void> {
   await git(root, "check-ref-format", "--branch", branch);
 }
 
+const ACTIVE_GIT_OPERATION_MARKERS = [
+  "MERGE_HEAD",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "REBASE_HEAD",
+  "rebase-merge",
+  "rebase-apply",
+  "sequencer",
+] as const;
+
+async function assertNoGitOperation(runtime: BoardRuntime): Promise<void> {
+  const unmerged = await git(runtime.repositoryRoot, "ls-files", "--unmerged", "-z");
+  if (unmerged) throw new GitError("refusing to commit while the Git index has conflicts");
+  for (const marker of ACTIVE_GIT_OPERATION_MARKERS) {
+    try {
+      await lstat(path.join(runtime.gitDirectory, marker));
+      throw new GitError(`refusing to commit while a Git operation is in progress (${marker})`);
+    } catch (error) {
+      if (error instanceof GitError) throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
+    }
+  }
+}
+
+interface CapturedEntry {
+  readonly mode: "100644" | "100755";
+  readonly oid: string;
+}
+
+interface IndexEntry {
+  readonly mode: string;
+  readonly oid: string;
+  readonly stage: string;
+  readonly path: string;
+}
+
+interface CommitCandidate {
+  readonly tree: string;
+  readonly indexInfo: string;
+}
+
+function errorCode(error: unknown): string {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code: unknown }).code)
+    : "";
+}
+
+function indexEntries(output: string): IndexEntry[] {
+  const entries: IndexEntry[] = [];
+  for (const record of output.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab === -1) continue;
+    const [mode, oid, stage] = record.slice(0, tab).split(" ");
+    const relativePath = record.slice(tab + 1);
+    if (!mode || !oid || !stage || !relativePath) continue;
+    entries.push({ mode, oid, stage, path: relativePath });
+  }
+  return entries;
+}
+
+function invalidPlanningDocuments(error: unknown): GitError {
+  const details =
+    typeof error === "object" && error !== null && "details" in error
+      ? String((error as { details: unknown }).details)
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return new GitError(`refusing to commit invalid planning documents: ${details.slice(0, 4096)}`);
+}
+
+async function captureEntry(
+  runtime: BoardRuntime,
+  relativePath: string,
+  previousMode: string | undefined,
+  trustFileMode: boolean,
+): Promise<{ readonly bytes: Uint8Array; readonly mode: "100644" | "100755" } | null> {
+  const absolutePath = resolveWithin(runtime.repositoryRoot, relativePath);
+  try {
+    const named = await lstat(absolutePath);
+    if (!named.isFile() || named.isSymbolicLink()) {
+      throw new GitPreviewConflictError(
+        `working tree changed at ${relativePath}; review the updated commit preview`,
+      );
+    }
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return null;
+    throw error;
+  }
+
+  await assertSafeRepositoryFile(runtime.repositoryRoot, relativePath);
+  let handle;
+  try {
+    handle = await open(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = await handle.stat();
+    if (!before.isFile()) {
+      throw new GitPreviewConflictError(
+        `working tree changed at ${relativePath}; review the updated commit preview`,
+      );
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    const [current, canonical] = await Promise.all([lstat(absolutePath), realpath(absolutePath)]);
+    if (
+      !current.isFile() ||
+      current.isSymbolicLink() ||
+      canonical !== absolutePath ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs ||
+      after.dev !== current.dev ||
+      after.ino !== current.ino ||
+      after.size !== bytes.byteLength
+    ) {
+      throw new GitPreviewConflictError(
+        `working tree changed at ${relativePath}; review the updated commit preview`,
+      );
+    }
+    const filesystemMode = (after.mode & 0o111) === 0 ? "100644" : "100755";
+    const mode = !trustFileMode && (previousMode === "100644" || previousMode === "100755")
+      ? previousMode
+      : filesystemMode;
+    return { bytes, mode };
+  } catch (error) {
+    if (error instanceof GitPreviewConflictError) throw error;
+    throw new GitPreviewConflictError(
+      `working tree changed at ${relativePath}; review the updated commit preview`,
+    );
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function candidateDocuments(
+  runtime: BoardRuntime,
+  indexFile: string,
+): Promise<SourceDocument[]> {
+  const output = await gitCommand(
+    runtime.repositoryRoot,
+    ["ls-files", "--stage", "-z"],
+    { indexFile },
+  );
+  const matching = indexEntries(output).filter((entry) =>
+    matchesPlanningDocumentPath(entry.path, runtime.config)
+  );
+  const byPath = new Map<string, IndexEntry[]>();
+  for (const entry of matching) {
+    const entries = byPath.get(entry.path) ?? [];
+    entries.push(entry);
+    byPath.set(entry.path, entries);
+  }
+
+  const documents: SourceDocument[] = [];
+  for (const [relativePath, entries] of [...byPath.entries()].sort(([left], [right]) =>
+    left.localeCompare(right)
+  )) {
+    const entry = entries[0];
+    if (
+      entries.length !== 1 ||
+      !entry ||
+      entry.stage !== "0" ||
+      (entry.mode !== "100644" && entry.mode !== "100755")
+    ) {
+      throw new GitError(`refusing unsafe candidate index entry for ${relativePath}`);
+    }
+    const text = await git(runtime.repositoryRoot, "cat-file", "blob", entry.oid);
+    documents.push({ path: relativePath, text, sha256: sha256(text) });
+  }
+  return documents;
+}
+
+async function buildCommitCandidate(
+  runtime: BoardRuntime,
+  head: string,
+  files: readonly string[],
+): Promise<CommitCandidate> {
+  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "planops-board-commit-"));
+  const indexFile = path.join(temporaryDirectory, "index");
+  try {
+    await gitCommand(runtime.repositoryRoot, ["read-tree", head], { indexFile });
+    const headModes = modesByPath(await git(runtime.repositoryRoot, "ls-tree", "-r", "-z", head));
+    const trustFileMode = await git(runtime.repositoryRoot, "config", "--bool", "core.filemode")
+      .then((value) => value.trim() !== "false", () => true);
+    const captured = new Map<string, CapturedEntry>();
+
+    for (const relativePath of files) {
+      const previousMode = [...(headModes.get(relativePath) ?? [])][0];
+      const entry = await captureEntry(runtime, relativePath, previousMode, trustFileMode);
+      if (!entry) continue;
+      const oid = (await gitCommand(
+        runtime.repositoryRoot,
+        ["hash-object", "-w", "--path", relativePath, "--stdin"],
+        { stdin: entry.bytes },
+      )).trim();
+      captured.set(relativePath, { mode: entry.mode, oid });
+    }
+
+    const zeroOid = "0".repeat(head.length);
+    let indexInfo = "";
+    for (const relativePath of files) {
+      indexInfo += `0 ${zeroOid}\t${relativePath}\0`;
+      const entry = captured.get(relativePath);
+      if (entry) indexInfo += `${entry.mode} ${entry.oid}\t${relativePath}\0`;
+    }
+    await gitCommand(
+      runtime.repositoryRoot,
+      ["update-index", "-z", "--add", "--index-info"],
+      { indexFile, stdin: indexInfo },
+    );
+    validatePlanningDocuments(runtime, await candidateDocuments(runtime, indexFile));
+    const tree = (await gitCommand(runtime.repositoryRoot, ["write-tree"], { indexFile })).trim();
+    return { tree, indexInfo };
+  } catch (error) {
+    if (error instanceof GitError) throw error;
+    throw invalidPlanningDocuments(error);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function installCommit(
+  runtime: BoardRuntime,
+  status: GitStatus,
+  request: CommitRequest,
+  head: string,
+  commitSha: string,
+  indexInfo: string,
+): Promise<string> {
+  const targetBranch = request.branch ?? status.branch;
+  const targetRef = `refs/heads/${targetBranch}`;
+  const zeroOid = "0".repeat(head.length);
+
+  if (request.branch) {
+    await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, zeroOid);
+    try {
+      await git(runtime.repositoryRoot, "symbolic-ref", "HEAD", targetRef);
+    } catch (error) {
+      await git(runtime.repositoryRoot, "update-ref", "-d", targetRef, commitSha).catch(() => undefined);
+      throw error;
+    }
+  } else {
+    await git(runtime.repositoryRoot, "update-ref", targetRef, commitSha, head);
+  }
+
+  try {
+    await gitCommand(
+      runtime.repositoryRoot,
+      ["update-index", "-z", "--add", "--index-info"],
+      { stdin: indexInfo },
+    );
+  } catch (error) {
+    const rollback: unknown[] = [];
+    try {
+      if (request.branch) {
+        if (status.detached) {
+          await git(runtime.repositoryRoot, "update-ref", "--no-deref", "HEAD", head);
+        } else {
+          await git(runtime.repositoryRoot, "symbolic-ref", "HEAD", `refs/heads/${status.branch}`);
+        }
+        await git(runtime.repositoryRoot, "update-ref", "-d", targetRef, commitSha);
+      } else {
+        await git(runtime.repositoryRoot, "update-ref", targetRef, head, commitSha);
+      }
+    } catch (rollbackError) {
+      rollback.push(rollbackError);
+    }
+    if (rollback.length > 0) {
+      throw new AggregateError([error, ...rollback], "commit installation and rollback failed");
+    }
+    throw error;
+  }
+  return targetBranch;
+}
+
 export async function commitPlanningChanges(
   runtime: BoardRuntime,
   request: CommitRequest,
@@ -217,18 +526,13 @@ export async function commitPlanningChanges(
   );
 
   try {
+    await assertNoGitOperation(runtime);
     let allowedFiles: ReadonlySet<string>;
     try {
       allowedFiles = await planningGitAllowlist(runtime);
       await validateRuntime(runtime);
     } catch (error) {
-      const details =
-        typeof error === "object" && error !== null && "details" in error
-          ? String((error as { details: unknown }).details)
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      throw new GitError(`refusing to commit invalid planning documents: ${details.slice(0, 4096)}`);
+      throw invalidPlanningDocuments(error);
     }
 
     const presentFiles = await planningGitAllowlist(runtime);
@@ -236,6 +540,11 @@ export async function commitPlanningChanges(
       runtime,
       new Set([...allowedFiles].filter((file) => presentFiles.has(file))),
     );
+    if (request.expectedCommitPreviewToken !== status.commitPreviewToken) {
+      throw new GitPreviewConflictError(
+        "working tree changed; review the updated commit preview",
+      );
+    }
     if (status.changedPlanningFiles.length === 0) {
       throw new GitError("no planning document changes to commit");
     }
@@ -253,31 +562,46 @@ export async function commitPlanningChanges(
       if (runtime.config.git.protectedBranches.includes(request.branch)) {
         throw new GitError(`refusing to create the protected branch ${request.branch}`);
       }
-      await git(runtime.repositoryRoot, "checkout", "-b", request.branch);
     }
 
-    await git(
-      runtime.repositoryRoot,
-      "reset",
-      "--quiet",
-      "HEAD",
-      "--",
-      ...status.changedPlanningFiles,
+    const head = await gitHead(runtime);
+    const candidate = await buildCommitCandidate(runtime, head, status.changedPlanningFiles);
+    const headTree = (await git(runtime.repositoryRoot, "rev-parse", `${head}^{tree}`)).trim();
+    if (candidate.tree === headTree) {
+      throw new GitError("no planning document changes to commit");
+    }
+    const latestFiles = await planningGitAllowlist(runtime);
+    const latestStatus = await gitStatus(
+      runtime,
+      new Set([...allowedFiles].filter((file) => latestFiles.has(file))),
     );
-    await git(runtime.repositoryRoot, "add", "--all", "--", ...status.changedPlanningFiles);
-    await git(
+    if (request.expectedCommitPreviewToken !== latestStatus.commitPreviewToken) {
+      throw new GitPreviewConflictError(
+        "working tree changed; review the updated commit preview",
+      );
+    }
+    await assertNoGitOperation(runtime);
+    const sha = (await git(
       runtime.repositoryRoot,
-      "commit",
-      "--only",
-      "--message",
+      "commit-tree",
+      candidate.tree,
+      "-p",
+      head,
+      "-m",
       request.message,
-      "--",
-      ...status.changedPlanningFiles,
+    )).trim();
+    const branch = await installCommit(
+      runtime,
+      status,
+      request,
+      head,
+      sha,
+      candidate.indexInfo,
     );
 
     return {
-      branch: (await git(runtime.repositoryRoot, "rev-parse", "--abbrev-ref", "HEAD")).trim(),
-      sha: (await git(runtime.repositoryRoot, "rev-parse", "HEAD")).trim(),
+      branch,
+      sha,
       files: status.changedPlanningFiles,
     };
   } finally {

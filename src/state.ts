@@ -184,6 +184,8 @@ export interface BoardState {
   readonly live: LiveStatus;
   /** Disk has moved and this tab has not caught up yet, because it is busy. */
   readonly behind: boolean;
+  /** A guarded Markdown write is queued or running. */
+  readonly writing: boolean;
   /** When a change made outside this tab was last adopted, epoch ms. */
   readonly refreshedAt: number | null;
   /** When the board source was last checked successfully, epoch ms. */
@@ -588,6 +590,7 @@ export function useBoard({ paused = false, session }: BoardOptions): BoardState 
     lastChanged,
     live,
     behind,
+    writing,
     refreshedAt,
     checkedAt,
     reload,

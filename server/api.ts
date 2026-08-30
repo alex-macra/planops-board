@@ -5,6 +5,7 @@ import {
   commitPlanningChanges,
   defaultCommitMessage,
   GitError,
+  GitPreviewConflictError,
   gitHead,
   gitStatus,
   suggestedBranchName,
@@ -60,6 +61,7 @@ const commitSchema = z
     taskIds: z.array(z.string()).default([]),
     message: z.string().optional(),
     branch: z.string().optional(),
+    expectedCommitPreviewToken: shaSchema,
   })
   .strict();
 const historySchema = z.object({ file: z.string().min(1), task: z.string().min(1) }).strict();
@@ -182,11 +184,15 @@ async function handleCommit(runtime: BoardRuntime, payload: unknown): Promise<Ap
   try {
     const result = await commitPlanningChanges(runtime, {
       message,
+      expectedCommitPreviewToken: parsed.data.expectedCommitPreviewToken,
       ...(parsed.data.branch ? { branch: parsed.data.branch } : {}),
     });
     forgetHistory();
     return { status: 200, body: result };
   } catch (error) {
+    if (error instanceof GitPreviewConflictError) {
+      return { status: 409, body: { error: error.message, kind: "conflict" } };
+    }
     if (error instanceof GitError) {
       return { status: 409, body: { error: error.message, kind: "git" } };
     }

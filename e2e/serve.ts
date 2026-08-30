@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { appendFile } from "node:fs/promises";
 import path from "node:path";
 
 import { disposableDemo, removeDisposableDemo } from "../tests/fixture.ts";
@@ -11,6 +12,7 @@ if (!Number.isSafeInteger(port) || port < 1024 || port > 65_535) {
 
 const engineRoot = path.resolve(import.meta.dirname, "..");
 const repositoryRoot = await disposableDemo();
+await appendFile(path.join(repositoryRoot, "README.md"), "\nUnrelated fictional browser note.\n");
 const child = spawn(
   process.execPath,
   ["--import", "tsx", "cli/planops-board.ts", "dev", "--repo", repositoryRoot, "--port", String(port)],
