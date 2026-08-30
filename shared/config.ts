@@ -33,6 +33,7 @@ const documentGlobSchema = z
       value.includes("\0") ||
       value.includes("\\") ||
       value.includes("..") ||
+      /\*{3}/.test(value) ||
       /[?\[\]{}()!+@]/.test(value) ||
       value.startsWith("/") ||
       /^[A-Za-z]:/.test(value) ||
@@ -57,6 +58,7 @@ const exclusionGlobSchema = z
       value.includes("\0") ||
       value.includes("\\") ||
       value.includes("..") ||
+      /\*{3}/.test(value) ||
       /[?\[\]{}()!+@]/.test(value) ||
       value.startsWith("/") ||
       /^[A-Za-z]:/.test(value) ||

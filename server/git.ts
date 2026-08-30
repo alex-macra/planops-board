@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
+import { lstat } from "node:fs/promises";
+import path from "node:path";
 
 import { runGitCommand } from "./git-command.ts";
 import { acquireLedgerLock, type LockOptions } from "./ledger/lock.ts";
 import { validateRuntime } from "./ledger/write.ts";
-import type { BoardRuntime } from "./runtime.ts";
+import {
+  assertSafeRepositoryDirectory,
+  discoverPlanningDocuments,
+  matchesPlanningDocumentPath,
+  resolveWithin,
+  type BoardRuntime,
+} from "./runtime.ts";
 
 export class GitError extends Error {
   override readonly name = "GitError";
@@ -48,7 +56,82 @@ function changedPaths(porcelain: string): string[] {
   return paths;
 }
 
-export async function gitStatus(runtime: BoardRuntime): Promise<GitStatus> {
+export async function planningGitAllowlist(
+  runtime: BoardRuntime,
+  currentFiles?: ReadonlySet<string>,
+): Promise<ReadonlySet<string>> {
+  const allowed = new Set(currentFiles ?? await discoverPlanningDocuments(
+    runtime.repositoryRoot,
+    runtime.config,
+    { allowEmpty: true },
+  ));
+  const [indexEntries, headEntries] = await Promise.all([
+    git(runtime.repositoryRoot, "ls-files", "--cached", "--stage", "-z"),
+    git(runtime.repositoryRoot, "ls-tree", "-r", "-z", "HEAD"),
+  ]);
+  const modesByPath = (output: string): Map<string, Set<string>> => {
+    const entries = new Map<string, Set<string>>();
+    for (const record of output.split("\0")) {
+      const tab = record.indexOf("\t");
+      if (tab === -1) continue;
+      const [mode] = record.slice(0, tab).split(" ");
+      const relativePath = record.slice(tab + 1);
+      if (!mode || !relativePath) continue;
+      const modes = entries.get(relativePath) ?? new Set<string>();
+      modes.add(mode);
+      entries.set(relativePath, modes);
+    }
+    return entries;
+  };
+  const indexModes = modesByPath(indexEntries);
+  const headModes = modesByPath(headEntries);
+  const candidates = new Set([...indexModes.keys(), ...headModes.keys()]);
+  for (const relativePath of candidates) {
+    if (!matchesPlanningDocumentPath(relativePath, runtime.config) || allowed.has(relativePath)) {
+      continue;
+    }
+    const modes = new Set([
+      ...(indexModes.get(relativePath) ?? []),
+      ...(headModes.get(relativePath) ?? []),
+    ]);
+    if (![...modes].every((mode) => mode === "100644" || mode === "100755")) continue;
+    const absolute = resolveWithin(runtime.repositoryRoot, relativePath);
+    try {
+      await lstat(absolute);
+      continue;
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code: unknown }).code)
+        : "";
+      if (code !== "ENOENT") continue;
+    }
+    let parent = path.posix.dirname(relativePath);
+    let safe = false;
+    while (true) {
+      const relativeParent = parent === "." ? "" : parent;
+      try {
+        await assertSafeRepositoryDirectory(runtime.repositoryRoot, relativeParent);
+        safe = true;
+        break;
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error
+          ? String((error as { code: unknown }).code)
+          : "";
+        if (code !== "ENOENT" || relativeParent === "") break;
+        const next = path.posix.dirname(relativeParent);
+        parent = next === "." ? "" : next;
+      }
+    }
+    if (safe) allowed.add(relativePath);
+  }
+  return allowed;
+}
+
+export async function gitStatus(
+  runtime: BoardRuntime,
+  allowedFiles?: ReadonlySet<string>,
+): Promise<GitStatus> {
+  const writableFiles = allowedFiles ?? await planningGitAllowlist(runtime);
   const branch = (await git(runtime.repositoryRoot, "rev-parse", "--abbrev-ref", "HEAD")).trim();
   const detached = branch === "HEAD";
   const porcelain = await git(
@@ -63,7 +146,7 @@ export async function gitStatus(runtime: BoardRuntime): Promise<GitStatus> {
   const changed = new Set<string>();
   const other = new Set<string>();
   for (const filePath of changedPaths(porcelain)) {
-    (runtime.writableFiles.has(filePath) ? changed : other).add(filePath);
+    (writableFiles.has(filePath) ? changed : other).add(filePath);
   }
   const changedPlanningFiles = [...changed].sort();
   const otherChangedFiles = [...other].sort();
@@ -84,9 +167,12 @@ export async function gitHead(runtime: BoardRuntime): Promise<string> {
   return (await git(runtime.repositoryRoot, "rev-parse", "HEAD")).trim();
 }
 
-export async function gitFingerprint(runtime: BoardRuntime): Promise<string> {
+export async function gitFingerprint(
+  runtime: BoardRuntime,
+  allowedFiles?: ReadonlySet<string>,
+): Promise<string> {
   try {
-    return (await gitStatus(runtime)).fingerprint;
+    return (await gitStatus(runtime, allowedFiles)).fingerprint;
   } catch {
     return "";
   }
@@ -131,7 +217,9 @@ export async function commitPlanningChanges(
   );
 
   try {
+    let allowedFiles: ReadonlySet<string>;
     try {
+      allowedFiles = await planningGitAllowlist(runtime);
       await validateRuntime(runtime);
     } catch (error) {
       const details =
@@ -143,7 +231,11 @@ export async function commitPlanningChanges(
       throw new GitError(`refusing to commit invalid planning documents: ${details.slice(0, 4096)}`);
     }
 
-    const status = await gitStatus(runtime);
+    const presentFiles = await planningGitAllowlist(runtime);
+    const status = await gitStatus(
+      runtime,
+      new Set([...allowedFiles].filter((file) => presentFiles.has(file))),
+    );
     if (status.changedPlanningFiles.length === 0) {
       throw new GitError("no planning document changes to commit");
     }
@@ -164,7 +256,15 @@ export async function commitPlanningChanges(
       await git(runtime.repositoryRoot, "checkout", "-b", request.branch);
     }
 
-    await git(runtime.repositoryRoot, "add", "--", ...status.changedPlanningFiles);
+    await git(
+      runtime.repositoryRoot,
+      "reset",
+      "--quiet",
+      "HEAD",
+      "--",
+      ...status.changedPlanningFiles,
+    );
+    await git(runtime.repositoryRoot, "add", "--all", "--", ...status.changedPlanningFiles);
     await git(
       runtime.repositoryRoot,
       "commit",

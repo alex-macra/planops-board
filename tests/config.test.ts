@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseBoardConfig } from "../shared/config.ts";
 import {
   RuntimeConfigError,
+  assertSafeRepositoryDirectory,
   discoverPlanningDocuments,
   loadBoardConfig,
   loadBoardRuntime,
+  matchesPlanningDocumentPath,
 } from "../server/runtime.ts";
 import { loadBoard } from "../server/ledger/corpus.ts";
 import { demoRoot, disposableDemo, removeDisposableDemo } from "./fixture.ts";
@@ -75,6 +77,7 @@ describe("configuration", () => {
     "../plans/**/*.md",
     "{plans,/tmp}/**/*.md",
     "plans/[.][.]/private.md",
+    "plans/***/private.md",
     "plans/**/*.txt",
   ])(
     "rejects unsafe document pattern %s",
@@ -100,6 +103,18 @@ describe("configuration", () => {
     ]);
   });
 
+  it.each([
+    ["plans/moon-garden.md", true],
+    ["plans/nested/comet-map.md", true],
+    ["plans/archive/retired.md", false],
+    ["plans/.hidden.md", false],
+    ["README.md", false],
+    ["../plans/private.md", false],
+  ])("matches configured Git path %s as %s", async (relativePath, expected) => {
+    const config = parseBoardConfig(await exampleConfig());
+    expect(matchesPlanningDocumentPath(relativePath, config)).toBe(expected);
+  });
+
   it("loads active and done ledgers from the planops template", async () => {
     const root = await disposableDemo();
     roots.push(root);
@@ -118,7 +133,7 @@ describe("configuration", () => {
     const runtime = await loadBoardRuntime({ repo: root });
     const board = await loadBoard(runtime, "2026-08-27T00:00:00.000Z");
 
-    expect(runtime.documents).toEqual([
+    expect(board.documents.map((document) => document.path)).toEqual([
       "tasks/active/current.md",
       "tasks/done/complete.md",
     ]);
@@ -154,13 +169,25 @@ describe("configuration", () => {
     await expect(discoverPlanningDocuments(root, config)).rejects.toBeInstanceOf(RuntimeConfigError);
   });
 
+  it("rejects a symlinked watcher directory", async () => {
+    const root = await disposableDemo();
+    roots.push(root);
+    await symlink("plans", path.join(root, "linked-plans"));
+    await expect(assertSafeRepositoryDirectory(root, "linked-plans"))
+      .rejects.toThrow(/symbolic links/);
+  });
+
   it("loads a canonical Git runtime and applies the CLI port override", async () => {
     const root = await disposableDemo();
     roots.push(root);
     const runtime = await loadBoardRuntime({ repo: path.join(root, "plans"), port: 6200 });
     expect(runtime.repositoryRoot).toBe(root);
     expect(runtime.port).toBe(6200);
-    expect(runtime.writableFiles).toEqual(new Set(runtime.documents));
+    await expect(discoverPlanningDocuments(root, runtime.config)).resolves.toEqual([
+      "plans/moon-garden.md",
+      "plans/shared-observatory.md",
+      "plans/signal-harbor.md",
+    ]);
   });
 
   it("rejects unsafe paths in the optional project map", async () => {

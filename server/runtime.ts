@@ -29,8 +29,6 @@ export interface BoardRuntime {
   readonly configPath: string;
   readonly config: BoardConfig;
   readonly port: number;
-  readonly documents: readonly string[];
-  readonly writableFiles: ReadonlySet<string>;
   readonly projects: readonly ProjectDefinition[];
   readonly externalValidator: ExternalValidator | null;
 }
@@ -108,6 +106,31 @@ export async function assertSafeRepositoryFile(root: string, relativePath: strin
   return absolute;
 }
 
+export async function assertSafeRepositoryDirectory(
+  root: string,
+  relativePath: string,
+): Promise<string> {
+  const absolute = relativePath === "" ? root : resolveWithin(root, relativePath);
+  let current = root;
+  for (const component of relativePath.split("/").filter(Boolean)) {
+    current = path.join(current, component);
+    const metadata = await lstat(current);
+    if (metadata.isSymbolicLink()) {
+      throw new RuntimeConfigError(`symbolic links are not allowed in watch paths: ${relativePath}`);
+    }
+  }
+  const metadata = await stat(absolute);
+  if (!metadata.isDirectory()) {
+    throw new RuntimeConfigError(`watch path is not a directory: ${relativePath || "."}`);
+  }
+  const canonical = await realpath(absolute);
+  relativeToRoot(root, canonical);
+  if (canonical !== absolute) {
+    throw new RuntimeConfigError(`watch path is not canonical: ${relativePath || "."}`);
+  }
+  return absolute;
+}
+
 export async function canonicalGitRoot(candidate: string): Promise<string> {
   const requested = await realpath(path.resolve(candidate)).catch((error: unknown) => {
     throw new RuntimeConfigError(`cannot resolve target repository: ${errorText(error)}`);
@@ -180,6 +203,7 @@ export async function loadBoardConfig(root: string, option?: string): Promise<{
 export async function discoverPlanningDocuments(
   root: string,
   config: BoardConfig,
+  options: { readonly allowEmpty?: boolean } = {},
 ): Promise<readonly string[]> {
   const matches = await fastGlob(config.documents.include, {
     cwd: root,
@@ -190,7 +214,7 @@ export async function discoverPlanningDocuments(
     unique: true,
   });
   const documents = [...new Set(matches.map((entry) => entry.split(path.sep).join("/")))].sort();
-  if (documents.length === 0) {
+  if (documents.length === 0 && options.allowEmpty !== true) {
     throw new RuntimeConfigError("the configured document globs did not match any Markdown files");
   }
   for (const document of documents) {
@@ -200,6 +224,80 @@ export async function discoverPlanningDocuments(
     await assertSafeRepositoryFile(root, document);
   }
   return documents;
+}
+
+function matchesGlobSegment(pattern: string, value: string): boolean {
+  if (value.startsWith(".") && !pattern.startsWith(".")) return false;
+  let patternIndex = 0;
+  let valueIndex = 0;
+  let starIndex = -1;
+  let starValueIndex = -1;
+  while (valueIndex < value.length) {
+    if (patternIndex < pattern.length && pattern[patternIndex] === value[valueIndex]) {
+      patternIndex += 1;
+      valueIndex += 1;
+      continue;
+    }
+    if (patternIndex < pattern.length && pattern[patternIndex] === "*") {
+      starIndex = patternIndex;
+      starValueIndex = valueIndex;
+      patternIndex += 1;
+      continue;
+    }
+    if (starIndex === -1) return false;
+    patternIndex = starIndex + 1;
+    starValueIndex += 1;
+    valueIndex = starValueIndex;
+  }
+  while (patternIndex < pattern.length && pattern[patternIndex] === "*") patternIndex += 1;
+  return patternIndex === pattern.length;
+}
+
+function matchesGlobPath(relativePath: string, pattern: string): boolean {
+  const pathSegments = relativePath.split("/");
+  const patternSegments = pattern.split("/");
+  const memo = new Map<string, boolean>();
+  const visit = (pathIndex: number, patternIndex: number): boolean => {
+    const key = `${pathIndex}:${patternIndex}`;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    let matched: boolean;
+    if (patternIndex === patternSegments.length) {
+      matched = pathIndex === pathSegments.length;
+    } else if (patternSegments[patternIndex] === "**") {
+      matched = visit(pathIndex, patternIndex + 1) || (
+        pathIndex < pathSegments.length &&
+        !pathSegments[pathIndex]!.startsWith(".") &&
+        visit(pathIndex + 1, patternIndex)
+      );
+    } else {
+      matched = pathIndex < pathSegments.length &&
+        matchesGlobSegment(patternSegments[patternIndex]!, pathSegments[pathIndex]!) &&
+        visit(pathIndex + 1, patternIndex + 1);
+    }
+    memo.set(key, matched);
+    return matched;
+  };
+  return visit(0, 0);
+}
+
+export function matchesPlanningDocumentPath(
+  relativePath: string,
+  config: BoardConfig,
+): boolean {
+  if (
+    !relativePath ||
+    relativePath.includes("\0") ||
+    relativePath.includes("\\") ||
+    relativePath.startsWith("/") ||
+    /^[A-Za-z]:/.test(relativePath)
+  ) {
+    return false;
+  }
+  const segments = relativePath.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return false;
+  return config.documents.include.some((pattern) => matchesGlobPath(relativePath, pattern)) &&
+    !config.documents.exclude.some((pattern) => matchesGlobPath(relativePath, pattern));
 }
 
 async function externalValidator(root: string, enabled: boolean): Promise<ExternalValidator | null> {
@@ -225,7 +323,7 @@ export async function loadBoardRuntime(options: RuntimeOptions): Promise<BoardRu
     throw new RuntimeConfigError("port must be an integer from 1024 through 65535");
   }
 
-  const [documents, projects, validator] = await Promise.all([
+  const [, projects, validator] = await Promise.all([
     discoverPlanningDocuments(repositoryRoot, config),
     config.projectsFile === undefined
       ? Promise.resolve([])
@@ -239,8 +337,6 @@ export async function loadBoardRuntime(options: RuntimeOptions): Promise<BoardRu
     configPath,
     config,
     port,
-    documents,
-    writableFiles: new Set(documents),
     projects,
     externalValidator: validator,
   };

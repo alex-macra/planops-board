@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 
 import type { BoardRuntime } from "./runtime.ts";
-import { assertSafeRepositoryFile } from "./runtime.ts";
+import { assertSafeRepositoryFile, discoverPlanningDocuments } from "./runtime.ts";
 import { runGitCommand } from "./git-command.ts";
 import { rowValues, type RowValues } from "./ledger/model.ts";
 
@@ -31,6 +31,7 @@ interface Commit {
   readonly date: string;
   readonly author: string;
   readonly subject: string;
+  readonly file: string;
 }
 
 interface FileHistory {
@@ -68,20 +69,43 @@ async function headSha(runtime: BoardRuntime): Promise<string> {
 async function commitsTouching(runtime: BoardRuntime, file: string): Promise<Commit[]> {
   const log = await git(
     runtime,
+    "--literal-pathspecs",
     "log",
     "--follow",
-    "--reverse",
-    "--format=%H%x00%aI%x00%an%x00%s",
+    "--find-renames",
+    "--name-status",
+    "-z",
+    "--format=%x00%x00%x00%x00%H%x00%aI%x00%an%x00%s",
     "--",
     file,
   );
-  return log
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => {
-      const [sha, date, author, subject] = line.split("\0");
-      return { sha: sha!, date: date!, author: author ?? "", subject: subject ?? "" };
+  let historicalPath = file;
+  const newestFirst: Commit[] = [];
+  for (const record of log.split(/\0{4,}/).filter(Boolean)) {
+    const [sha, date, author, subject, ...changes] = record.split("\0");
+    if (!sha || !date) continue;
+    newestFirst.push({
+      sha,
+      date,
+      author: author ?? "",
+      subject: subject ?? "",
+      file: historicalPath,
     });
+    for (let index = 0; index < changes.length;) {
+      const status = (changes[index] ?? "").replace(/^\n+/, "");
+      index += 1;
+      if (!status) continue;
+      if (/^[RC]\d+$/.test(status)) {
+        const source = changes[index] ?? "";
+        const target = changes[index + 1] ?? "";
+        index += 2;
+        if (status.startsWith("R") && target === historicalPath) historicalPath = source;
+      } else {
+        index += 1;
+      }
+    }
+  }
+  return newestFirst.reverse();
 }
 
 function changedFields(previous: RowValues | null, next: RowValues): ("status" | "priority")[] {
@@ -103,7 +127,7 @@ async function computeFile(
   const revisions = await Promise.all(
     commits.map(async (commit) => {
       try {
-        return await git(runtime, "show", `${commit.sha}:${file}`);
+        return await git(runtime, "show", `${commit.sha}:./${commit.file}`);
       } catch {
         return null;
       }
@@ -148,8 +172,9 @@ async function fileHistory(
   runtime: BoardRuntime,
   file: string,
   head: string,
+  writableFiles: ReadonlySet<string>,
 ): Promise<FileHistory> {
-  if (!runtime.writableFiles.has(file)) {
+  if (!writableFiles.has(file)) {
     throw new HistoryError(`${file} is not a planning document`);
   }
   const key = `${runtime.repositoryRoot}\u0000${file}`;
@@ -168,7 +193,10 @@ export async function taskHistory(
   file: string,
   taskId: string,
 ): Promise<TaskHistory> {
-  const history = await fileHistory(runtime, file, await headSha(runtime));
+  const writableFiles = new Set(
+    await discoverPlanningDocuments(runtime.repositoryRoot, runtime.config, { allowEmpty: true }),
+  );
+  const history = await fileHistory(runtime, file, await headSha(runtime), writableFiles);
   return {
     file,
     taskId,
@@ -187,11 +215,15 @@ export async function lastChangedIndex(
   runtime: BoardRuntime,
   files: readonly string[],
 ): Promise<Record<string, LastChange>> {
-  const head = await headSha(runtime);
+  const [head, discovered] = await Promise.all([
+    headSha(runtime),
+    discoverPlanningDocuments(runtime.repositoryRoot, runtime.config, { allowEmpty: true }),
+  ]);
+  const writableFiles = new Set(discovered);
   const histories = await Promise.all(
     files.map(async (file) => {
       try {
-        return await fileHistory(runtime, file, head);
+        return await fileHistory(runtime, file, head, writableFiles);
       } catch {
         return null;
       }

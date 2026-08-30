@@ -13,7 +13,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { BoardRuntime } from "./runtime.ts";
-import { readCorpusState, subscribeToCorpus, type CorpusState } from "./watch.ts";
+import { subscribeToCorpus, type CorpusState } from "./watch.ts";
 
 /** Under any proxy's idle timeout, and cheap: one comment frame. */
 const HEARTBEAT_MS = 25_000;
@@ -46,10 +46,6 @@ export function handleEvents(
   const send = (state: CorpusState): void => {
     write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
   };
-
-  // The current truth first: a tab that connects after a change it never saw
-  // must not sit on stale content waiting for the *next* one.
-  void readCorpusState(runtime).then(send, () => undefined);
 
   const unsubscribe = subscribeToCorpus(runtime, send);
 

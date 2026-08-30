@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -43,6 +43,29 @@ describe("Git-derived history", () => {
       subject: "Start fictional catalogue filters",
       changed: ["status"],
     });
+  });
+
+  it("keeps status history across a committed document rename", async () => {
+    const fixture = await runtime();
+    const source = "plans/moon-garden.md";
+    const target = "plans/moon-garden-renamed.md";
+    const absoluteSource = path.join(fixture.root, source);
+    const text = await readFile(absoluteSource, "utf8");
+    await writeFile(
+      absoluteSource,
+      text.replace("| P1 | Ready | `MGA-001` |", "| P1 | In progress | `MGA-001` |"),
+    );
+    await git(fixture.root, "add", source);
+    await git(fixture.root, "commit", "-m", "Start fictional catalogue filters");
+    await rename(absoluteSource, path.join(fixture.root, target));
+    await git(fixture.root, "add", "--all", "--", source, target);
+    await git(fixture.root, "commit", "-m", "Rename\u001e fictional catalogue plan");
+
+    const history = await taskHistory(fixture.runtime, target, "MGA-002");
+
+    expect(history.commitsScanned).toBe(3);
+    expect(history.entries.map((entry) => entry.status)).toEqual(["Ready", "In progress"]);
+    expect(history.entries.at(-1)?.subject).toBe("Start fictional catalogue filters");
   });
 
   it("refuses history for a path outside the discovered documents", async () => {

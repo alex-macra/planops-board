@@ -37,6 +37,7 @@ export function runGitCommand(
   options: GitCommandOptions = {},
 ): Promise<GitCommandResult> {
   const environment = sanitizedGitEnvironment();
+  environment.GIT_LITERAL_PATHSPECS = "1";
   if (options.authorDate !== undefined) environment.GIT_AUTHOR_DATE = options.authorDate;
   if (options.committerDate !== undefined) {
     environment.GIT_COMMITTER_DATE = options.committerDate;
