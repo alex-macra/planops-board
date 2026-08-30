@@ -716,12 +716,28 @@ async function acquireIndexLock(runtime: BoardRuntime): Promise<HeldIndexLock> {
     } catch (cleanupError) {
       cleanupErrors.push(cleanupError);
     }
+    let removed = false;
+    if (ownedIdentity && process.platform !== "win32") {
+      try {
+        const named = await lstat(lockPath);
+        if (named.dev === ownedIdentity.device && named.ino === ownedIdentity.inode) {
+          await unlink(lockPath);
+          removed = true;
+        } else {
+          cleanupErrors.push(new GitPreviewConflictError(
+            "ownership of the Git index lock was lost before acquisition cleanup",
+          ));
+        }
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
     try {
       await handle.close();
     } catch (cleanupError) {
       cleanupErrors.push(cleanupError);
     }
-    if (ownedIdentity) {
+    if (ownedIdentity && !removed && process.platform === "win32") {
       try {
         const named = await lstat(lockPath);
         if (named.dev === ownedIdentity.device && named.ino === ownedIdentity.inode) {
@@ -765,13 +781,30 @@ async function assertIndexLockOwned(lock: HeldIndexLock): Promise<void> {
 }
 
 async function releaseIndexLock(lock: HeldIndexLock): Promise<void> {
-  if (lock.published) return;
+  if (lock.published) {
+    if (lock.handle) {
+      try {
+        await lock.handle.close();
+      } catch {}
+      lock.handle = null;
+    }
+    return;
+  }
   const errors: unknown[] = [];
   let owned = false;
   try {
     await assertIndexLockOwned(lock);
     owned = true;
   } catch {}
+  const handleWasOpen = lock.handle !== null;
+  if (owned && handleWasOpen && process.platform !== "win32") {
+    try {
+      await unlink(lock.lockPath);
+      owned = false;
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") errors.push(error);
+    }
+  }
   if (lock.handle) {
     try {
       await lock.handle.close();
@@ -782,6 +815,7 @@ async function releaseIndexLock(lock: HeldIndexLock): Promise<void> {
   }
   if (owned) {
     try {
+      await assertIndexLockOwned(lock);
       await unlink(lock.lockPath);
     } catch (error) {
       if (errorCode(error) !== "ENOENT") errors.push(error);
@@ -877,8 +911,6 @@ async function prepareLockedIndex(
     await lock.handle.chmod(originalMode);
     await lock.handle.writeFile(preparedBytes);
     await lock.handle.sync();
-    await lock.handle.close();
-    lock.handle = null;
     return { originalBytes };
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -1013,6 +1045,12 @@ async function installCommit(
     await assertIndexLockOwned(indexLock);
     await rename(indexLock.lockPath, indexLock.indexPath);
     indexLock.published = true;
+    if (indexLock.handle) {
+      try {
+        await indexLock.handle.close();
+        indexLock.handle = null;
+      } catch {}
+    }
     await syncGitDirectory(runtime.gitDirectory);
   } catch (error) {
     if (indexLock.published) throw error;
