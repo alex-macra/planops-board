@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { dataQualityIssueKindSchema } from "./data-quality.ts";
+
 const stringList = z.array(z.string()).readonly();
 
 const workflowSchema = z.object({
@@ -125,22 +127,7 @@ const findingSchema = z.object({
 }).readonly();
 
 const issueSchema = z.object({
-  kind: z.enum([
-    "dangling-dependency",
-    "ambiguous-dependency",
-    "duplicate-dependency",
-    "duplicate-task-id",
-    "dependency-cycle",
-    "dependency-gate",
-    "dependency-residue",
-    "unknown-status",
-    "unknown-priority",
-    "self-dependency",
-    "detail-without-row",
-    "story-incomplete",
-    "story-member-unknown",
-    "story-member-shared",
-  ]),
+  kind: dataQualityIssueKindSchema,
   taskId: z.string(),
   file: z.string(),
   line: z.number().int().positive(),

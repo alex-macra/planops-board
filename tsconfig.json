@@ -19,6 +19,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["server", "src", "shared", "tests", "e2e", "*.ts"],
+  "include": ["cli", "server", "src", "shared", "tests", "e2e", "*.ts"],
   "exclude": ["node_modules", "dist"]
 }

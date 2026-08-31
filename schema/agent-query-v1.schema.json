@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/alex-macra/planops-board/main/schema/agent-query-v1.schema.json",
+  "title": "PlanOps Board agent query envelope version 1",
+  "oneOf": [
+    { "$ref": "#/$defs/startableSuccess" },
+    { "$ref": "#/$defs/staleSuccess" },
+    { "$ref": "#/$defs/issuesSuccess" },
+    { "$ref": "#/$defs/failure" }
+  ],
+  "$defs": {
+    "gitSha": {
+      "type": "string",
+      "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "sha", "corpusRevision"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1 },
+        "sha": { "$ref": "#/$defs/gitSha" },
+        "corpusRevision": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "gate", "resolved", "ambiguous", "duplicate"],
+      "properties": {
+        "id": { "type": "string" },
+        "gate": { "type": ["string", "null"] },
+        "resolved": { "type": "boolean" },
+        "ambiguous": { "type": "boolean" },
+        "duplicate": { "type": "boolean" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "outcome",
+        "file",
+        "line",
+        "documentSha256",
+        "status",
+        "statusBase",
+        "priority",
+        "readiness",
+        "readinessReasons",
+        "dependencies",
+        "project",
+        "projects",
+        "repositories"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": ["string", "null"] },
+        "outcome": { "type": "string" },
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "documentSha256": { "$ref": "#/$defs/sha256" },
+        "status": { "type": "string" },
+        "statusBase": { "type": ["string", "null"] },
+        "priority": { "type": ["string", "null"] },
+        "readiness": {
+          "type": ["string", "null"],
+          "enum": ["startable", "waiting", "needs-gate-check", null]
+        },
+        "readinessReasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/dependency" }
+        },
+        "project": { "type": "string" },
+        "projects": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "repositories": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "startableItem": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/task" },
+        {
+          "type": "object",
+          "required": ["fanOut"],
+          "properties": {
+            "fanOut": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "staleItem": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/task" },
+        {
+          "type": "object",
+          "required": ["ageDays"],
+          "properties": {
+            "ageDays": { "type": "integer", "minimum": 7, "maximum": 9007199254740991 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "taskId", "file", "line", "detail"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "dangling-dependency",
+            "ambiguous-dependency",
+            "duplicate-dependency",
+            "duplicate-task-id",
+            "dependency-cycle",
+            "dependency-gate",
+            "dependency-residue",
+            "unknown-status",
+            "unknown-priority",
+            "self-dependency",
+            "detail-without-row",
+            "story-incomplete",
+            "story-member-unknown",
+            "story-member-shared"
+          ]
+        },
+        "taskId": { "type": "string" },
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "detail": { "type": "string" }
+      }
+    },
+    "startableSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "ok", "command", "source", "data"],
+      "properties": {
+        "contractVersion": { "const": 1 },
+        "ok": { "const": true },
+        "command": { "const": "query.startable" },
+        "source": { "$ref": "#/$defs/source" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "items"],
+          "properties": {
+            "total": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "items": {
+              "type": "array",
+              "description": "Ordered by transitive fan-out descending, configured priority, then task ID.",
+              "items": { "$ref": "#/$defs/startableItem" }
+            }
+          }
+        }
+      }
+    },
+    "staleSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "ok", "command", "source", "data"],
+      "properties": {
+        "contractVersion": { "const": 1 },
+        "ok": { "const": true },
+        "command": { "const": "query.stale" },
+        "source": { "$ref": "#/$defs/source" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["asOfDate", "thresholdDays", "total", "items"],
+          "properties": {
+            "asOfDate": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "thresholdDays": { "const": 7 },
+            "total": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "items": {
+              "type": "array",
+              "description": "Ordered by age descending, configured priority, then task ID.",
+              "items": { "$ref": "#/$defs/staleItem" }
+            }
+          }
+        }
+      }
+    },
+    "issuesSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "ok", "command", "source", "data"],
+      "properties": {
+        "contractVersion": { "const": 1 },
+        "ok": { "const": true },
+        "command": { "const": "query.issues" },
+        "source": { "$ref": "#/$defs/source" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "items"],
+          "properties": {
+            "total": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "items": {
+              "type": "array",
+              "description": "Ordered by kind, file, line, task ID, then detail.",
+              "items": { "$ref": "#/$defs/issue" }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "ok", "command", "error"],
+      "properties": {
+        "contractVersion": { "const": 1 },
+        "ok": { "const": false },
+        "command": {
+          "type": "string",
+          "pattern": "^query\\.[a-z][a-z0-9-]*$"
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "invalid_request",
+                "missing_task",
+                "conflict",
+                "validation_failed",
+                "forbidden",
+                "internal_error"
+              ]
+            },
+            "message": { "type": "string", "minLength": 1 },
+            "details": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

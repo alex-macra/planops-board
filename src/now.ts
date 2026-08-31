@@ -1,9 +1,9 @@
 import type { Board, LastChange, ProjectSummary, Task } from "../shared/contracts.ts";
-import { daysSince } from "./components/relative.ts";
-import { buildDependencyGraph, isImpactClosed } from "./dependency-graph.ts";
+import { selectStaleTasks, STALE_DAYS, taskFanOut } from "../shared/task-selectors.ts";
+import { isImpactClosed } from "./dependency-graph.ts";
 import { comparePriority } from "./priority.ts";
 
-export const STALE_DAYS = 7;
+export { STALE_DAYS };
 
 export type NowGroupId = "land" | "stale" | "person" | "unblocks" | "start";
 
@@ -40,12 +40,7 @@ export function isParked(task: Task, parked: ReadonlySet<string>): boolean {
   return touched.size > 0 && [...touched].every((project) => parked.has(project));
 }
 
-export function fanOut(board: Board, tasks: readonly Task[]): Map<string, number> {
-  const graph = buildDependencyGraph(tasks, board.workflow);
-  const counts = new Map<string, number>();
-  for (const task of tasks) counts.set(task.id, graph.actionableFanOut(task.id));
-  return counts;
-}
+export { taskFanOut as fanOut };
 
 export function buildNow(
   board: Board,
@@ -58,12 +53,9 @@ export function buildNow(
   const historyReady = Object.keys(lastChanged).length > 0;
 
   const live = tasks.filter((task) => !isParked(task, parkedIds));
-  const counts = fanOut(board, board.tasks);
-
-  const untouched = (task: Task): number | null => {
-    const changed = lastChanged[task.id];
-    return changed ? daysSince(changed.date, now) : null;
-  };
+  const counts = taskFanOut(board);
+  const stale = selectStaleTasks(board, lastChanged, now, live);
+  const staleById = new Map(stale.map((entry, index) => [entry.task.id, { entry, index }]));
 
   const claimed = new Set<string>();
   const take = (
@@ -91,15 +83,11 @@ export function buildNow(
       "Going stale",
       `Active tasks whose latest Git change is at least ${STALE_DAYS} days old.`,
       (task) => {
-        if (
-          !historyReady ||
-          task.statusBase === null ||
-          !board.workflow.activeStatuses.includes(task.statusBase)
-        ) return false;
-        const days = untouched(task);
-        return days !== null && days >= STALE_DAYS ? `${days}d untouched` : false;
+        if (!historyReady) return false;
+        const match = staleById.get(task.id)?.entry;
+        return match ? `${match.ageDays}d untouched` : false;
       },
-      (a, b) => (untouched(b.task) ?? 0) - (untouched(a.task) ?? 0),
+      (a, b) => (staleById.get(a.task.id)?.index ?? 0) - (staleById.get(b.task.id)?.index ?? 0),
     ),
     take(
       "person",

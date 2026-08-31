@@ -88,7 +88,7 @@ describe("readiness explanations", () => {
     ]);
     const task = fixture.tasks.find((entry) => entry.id === "ORB-002")!;
     expect(readinessReasons(fixture as unknown as BrowserBoard, task)).toEqual(expect.arrayContaining([
-      "Unparsed dependency text needs review: approval",
+      "Dependency text contains unparsed content that needs review.",
       "ORB-001 also requires the unchecked @reviewed gate.",
       "ORB-999 is not defined in the planning corpus.",
     ]));

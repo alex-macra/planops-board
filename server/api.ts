@@ -6,7 +6,6 @@ import {
   defaultCommitMessage,
   GitError,
   GitPreviewConflictError,
-  gitHead,
   gitStatus,
   suggestedBranchName,
 } from "./git.ts";
@@ -16,6 +15,7 @@ import { NoteError, planNote } from "./ledger/notes.ts";
 import { ConflictError, PatchError } from "./ledger/patch.ts";
 import { applyWrite, ForbiddenPathError, ValidationError } from "./ledger/write.ts";
 import type { BoardRuntime } from "./runtime.ts";
+import { gitSourceIdentity } from "./source-identity.ts";
 
 export interface ApiResponse {
   readonly status: number;
@@ -208,16 +208,15 @@ export async function handleApi(
   query: URLSearchParams = new URLSearchParams(),
 ): Promise<ApiResponse> {
   if (method === "GET" && pathname === "/api/session") {
-    const [board, status, sourceSha] = await Promise.all([
+    const [board, source] = await Promise.all([
       loadBoard(runtime),
-      gitStatus(runtime),
-      gitHead(runtime),
+      gitSourceIdentity(runtime),
     ]);
     return {
       status: 200,
       body: {
-        sourceRef: status.detached ? "HEAD" : `refs/heads/${status.branch}`,
-        sourceSha,
+        sourceRef: source.ref,
+        sourceSha: source.sha,
         builtAt: board.generatedAt,
         capabilities: { history: true, liveEvents: true, localWrites: true },
       },

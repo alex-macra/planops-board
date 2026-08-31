@@ -211,10 +211,12 @@ export interface LastChange {
   readonly subject: string | null;
 }
 
-export async function lastChangedIndex(
+export type LastChangedByFile = Readonly<Record<string, Readonly<Record<string, LastChange>>>>;
+
+export async function lastChangedByFile(
   runtime: BoardRuntime,
   files: readonly string[],
-): Promise<Record<string, LastChange>> {
+): Promise<LastChangedByFile> {
   const [head, discovered] = await Promise.all([
     headSha(runtime),
     discoverPlanningDocuments(runtime.repositoryRoot, runtime.config, { allowEmpty: true }),
@@ -230,14 +232,29 @@ export async function lastChangedIndex(
     }),
   );
 
-  const index: Record<string, LastChange> = {};
-  for (const history of histories) {
-    if (history === null) continue;
+  const byFile: Record<string, Record<string, LastChange>> = {};
+  histories.forEach((history, index) => {
+    if (history === null) return;
+    const changes: Record<string, LastChange> = {};
     for (const [taskId, entries] of history.byTask) {
       const latest = entries[entries.length - 1];
       if (!latest) continue;
-      index[taskId] = { date: latest.date, sha: latest.sha, subject: latest.subject };
+      changes[taskId] = { date: latest.date, sha: latest.sha, subject: latest.subject };
     }
+    const file = files[index];
+    if (file) byFile[file] = changes;
+  });
+  return byFile;
+}
+
+export async function lastChangedIndex(
+  runtime: BoardRuntime,
+  files: readonly string[],
+): Promise<Record<string, LastChange>> {
+  const index: Record<string, LastChange> = {};
+  const byFile = await lastChangedByFile(runtime, files);
+  for (const file of files) {
+    Object.assign(index, byFile[file]);
   }
   return index;
 }

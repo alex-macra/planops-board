@@ -1,0 +1,9 @@
+{
+  "contractVersion": 1,
+  "ok": false,
+  "command": "query.startable",
+  "error": {
+    "code": "invalid_request",
+    "message": "--repo is required"
+  }
+}
