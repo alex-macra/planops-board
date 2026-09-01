@@ -1,0 +1,35 @@
+{
+  "contractVersion": 1,
+  "ok": true,
+  "command": "query.startable",
+  "source": {
+    "ref": "refs/heads/main",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "corpusRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "id": "POB-001",
+        "title": "Expose agent queries",
+        "outcome": "Agents inspect bounded task state.",
+        "file": "plans/board.md",
+        "line": 12,
+        "documentSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "status": "Ready; contract accepted",
+        "statusBase": "Ready",
+        "priority": "P1",
+        "readiness": "startable",
+        "readinessReasons": [
+          "Every dependency has a configured satisfied status and no unchecked gate remains."
+        ],
+        "dependencies": [],
+        "project": "planops-board",
+        "projects": ["planops-board"],
+        "repositories": ["planops-board"],
+        "fanOut": 3
+      }
+    ]
+  }
+}

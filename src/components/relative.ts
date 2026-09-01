@@ -1,3 +1,5 @@
+import { daysSince } from "../../shared/time.ts";
+
 /**
  * Ages, for the "last changed" column and the activity timeline.
  *
@@ -5,11 +7,7 @@
  * coarse: the underlying dates are commit dates, so implying minute precision
  * would overstate what the history actually knows.
  */
-const DAY = 24 * 60 * 60 * 1000;
-
-export function daysSince(iso: string, now = Date.now()): number {
-  return Math.floor((now - new Date(iso).getTime()) / DAY);
-}
+export { daysSince };
 
 export function age(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "-";

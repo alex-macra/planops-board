@@ -8,7 +8,9 @@
  */
 import { createHash } from "node:crypto";
 
+import { compareText } from "../../shared/compare.ts";
 import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../../shared/config.ts";
+import type { DataQualityIssueKind } from "../../shared/data-quality.ts";
 import { extractDetailBlocks, type DetailBlock } from "./detail.ts";
 import { extractTables, pythonStrip, type Table, type TableRow } from "./parse.ts";
 import {
@@ -123,21 +125,7 @@ export interface DocumentSummary {
 }
 
 export interface DataQualityIssue {
-  readonly kind:
-    | "dangling-dependency"
-    | "ambiguous-dependency"
-    | "duplicate-dependency"
-    | "duplicate-task-id"
-    | "dependency-cycle"
-    | "dependency-gate"
-    | "dependency-residue"
-    | "unknown-status"
-    | "unknown-priority"
-    | "self-dependency"
-    | "detail-without-row"
-    | "story-incomplete"
-    | "story-member-unknown"
-    | "story-member-shared";
+  readonly kind: DataQualityIssueKind;
   readonly taskId: string;
   readonly file: string;
   readonly line: number;
@@ -337,7 +325,7 @@ export function rowValues(text: string): Map<string, RowValues> {
  */
 export function revisionOf(documents: readonly SourceDocument[]): string {
   const hash = createHash("sha256");
-  for (const document of [...documents].sort((a, b) => a.path.localeCompare(b.path))) {
+  for (const document of [...documents].sort((a, b) => compareText(a.path, b.path))) {
     hash.update(`${document.path}\u0000${document.sha256}\n`);
   }
   return hash.digest("hex");

@@ -1,0 +1,43 @@
+{
+  "contractVersion": 1,
+  "ok": true,
+  "command": "query.stale",
+  "source": {
+    "ref": "HEAD",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "corpusRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "data": {
+    "asOfDate": "2026-08-31",
+    "thresholdDays": 7,
+    "total": 1,
+    "items": [
+      {
+        "id": "POB-002",
+        "title": null,
+        "outcome": "The stale contract matches the UI.",
+        "file": "plans/board.md",
+        "line": 13,
+        "documentSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "status": "In progress",
+        "statusBase": "In progress",
+        "priority": null,
+        "readiness": "startable",
+        "readinessReasons": [],
+        "dependencies": [
+          {
+            "id": "POB-001",
+            "gate": null,
+            "resolved": true,
+            "ambiguous": false,
+            "duplicate": false
+          }
+        ],
+        "project": "planops-board",
+        "projects": ["planops-board"],
+        "repositories": ["planops-board"],
+        "ageDays": 7
+      }
+    ]
+  }
+}

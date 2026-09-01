@@ -1,8 +1,9 @@
 import type { JSX } from "react";
 import { useMemo } from "react";
 
+import { selectStaleTasks, STALE_DAYS } from "../../shared/task-selectors.ts";
 import type { Board, LastChange, Task, Workflow } from "../api.ts";
-import { age, daysSince } from "../components/relative.ts";
+import { age } from "../components/relative.ts";
 import { Stat, StatRow } from "../components/Stat.tsx";
 import { StatusTag } from "../components/Tag.tsx";
 import { statusTone } from "../components/tone.ts";
@@ -18,8 +19,6 @@ interface Props {
   readonly onSelectTask: (taskId: string) => void;
   readonly lastChanged: Readonly<Record<string, LastChange>>;
 }
-
-const STALE_DAYS = 7;
 
 interface Group {
   readonly key: string;
@@ -175,12 +174,8 @@ export function Rollup({
    */
   const stale = useMemo(() => {
     if (Object.keys(lastChanged).length === 0) return [];
-    return tasks
-      .filter((task) => task.statusBase !== null && board.workflow.activeStatuses.includes(task.statusBase))
-      .map((task) => ({ task, changed: lastChanged[task.id] }))
-      .filter((entry) => entry.changed && daysSince(entry.changed.date) >= STALE_DAYS)
-      .sort((a, b) => daysSince(b.changed!.date) - daysSince(a.changed!.date));
-  }, [board.workflow.activeStatuses, tasks, lastChanged]);
+    return selectStaleTasks(board, lastChanged, Date.now(), tasks);
+  }, [board, tasks, lastChanged]);
 
   /** How much of the corpus carries a description at all. */
   const documented = useMemo(
@@ -256,7 +251,7 @@ export function Rollup({
                 <StatusTag tone={statusTone(entry.task.statusBase, board.workflow)}>
                   {entry.task.statusBase}
                 </StatusTag>
-                <span className="tabular text-ui-text-subtle">{age(entry.changed!.date)}</span>
+                <span className="tabular text-ui-text-subtle">{age(entry.lastChange.date)}</span>
                 <span className="stale-task">{entry.task.title ?? entry.task.outcome}</span>
               </li>
             ))}
@@ -277,7 +272,7 @@ export function Rollup({
                     <StatusTag tone={statusTone(entry.task.statusBase, board.workflow)}>
                       {entry.task.statusBase}
                     </StatusTag>
-                    <span className="tabular text-ui-text-subtle">{age(entry.changed!.date)}</span>
+                    <span className="tabular text-ui-text-subtle">{age(entry.lastChange.date)}</span>
                     <span className="stale-task">{entry.task.title ?? entry.task.outcome}</span>
                   </li>
                 ))}

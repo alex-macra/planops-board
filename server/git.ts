@@ -280,10 +280,6 @@ export async function gitStatus(
   return status;
 }
 
-export async function gitHead(runtime: BoardRuntime): Promise<string> {
-  return (await git(runtime.repositoryRoot, "rev-parse", "HEAD")).trim();
-}
-
 export async function gitFingerprint(
   runtime: BoardRuntime,
   allowedFiles?: ReadonlySet<string>,

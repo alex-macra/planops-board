@@ -1,0 +1,22 @@
+{
+  "contractVersion": 1,
+  "ok": true,
+  "command": "query.issues",
+  "source": {
+    "ref": "refs/heads/main",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "corpusRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "kind": "dangling-dependency",
+        "taskId": "POB-003",
+        "file": "plans/board.md",
+        "line": 14,
+        "detail": "POB-999 is not defined in the planning corpus."
+      }
+    ]
+  }
+}
