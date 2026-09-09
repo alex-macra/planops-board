@@ -140,7 +140,9 @@
             "detail-without-row",
             "story-incomplete",
             "story-member-unknown",
-            "story-member-shared"
+            "story-member-shared",
+            "story-member-cross-file",
+            "story-member-unassigned"
           ]
         },
         "taskId": { "type": "string" },

@@ -26,7 +26,9 @@ import {
   assertSafeRepositoryFile,
   assertSafeRepositoryDirectory,
   discoverPlanningDocuments,
+  discoverWritablePlanningDocuments,
   matchesPlanningDocumentPath,
+  matchesWritablePlanningDocumentPath,
   resolveWithin,
   type BoardRuntime,
 } from "./runtime.ts";
@@ -155,10 +157,13 @@ export async function planningGitAllowlist(
   runtime: BoardRuntime,
   currentFiles?: ReadonlySet<string>,
 ): Promise<ReadonlySet<string>> {
-  const allowed = new Set(currentFiles ?? await discoverPlanningDocuments(
+  const discovered = currentFiles === undefined
+    ? await discoverPlanningDocuments(runtime.repositoryRoot, runtime.config, { allowEmpty: true })
+    : [...currentFiles];
+  const allowed = new Set(currentFiles ?? await discoverWritablePlanningDocuments(
     runtime.repositoryRoot,
     runtime.config,
-    { allowEmpty: true },
+    discovered,
   ));
   const [indexEntries, headEntries] = await Promise.all([
     git(runtime.repositoryRoot, "ls-files", "--cached", "--stage", "-z"),
@@ -168,7 +173,7 @@ export async function planningGitAllowlist(
   const headModes = modesByPath(headEntries);
   const candidates = new Set([...indexModes.keys(), ...headModes.keys()]);
   for (const relativePath of candidates) {
-    if (!matchesPlanningDocumentPath(relativePath, runtime.config) || allowed.has(relativePath)) {
+    if (!matchesWritablePlanningDocumentPath(relativePath, runtime.config) || allowed.has(relativePath)) {
       continue;
     }
     const modes = new Set([

@@ -214,13 +214,21 @@ const FOCUSABLE = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
+  "details > summary:first-of-type:not([tabindex='-1'])",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
 function focusableWithin(element: HTMLElement): HTMLElement[] {
-  return [...element.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (candidate) => !candidate.hidden && candidate.getAttribute("aria-hidden") !== "true",
-  );
+  return [...element.querySelectorAll<HTMLElement>(`:is(${FOCUSABLE})`)].filter((candidate) => {
+    if (candidate.tabIndex < 0) return false;
+    if (candidate.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+    let disclosure = candidate.parentElement?.closest("details:not([open])");
+    while (disclosure) {
+      if (!disclosure.querySelector(":scope > summary")?.contains(candidate)) return false;
+      disclosure = disclosure.parentElement?.closest("details:not([open])");
+    }
+    return true;
+  });
 }
 
 function useDialogFocus(
@@ -354,10 +362,11 @@ export interface DrawerProps {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly side?: "left" | "right";
-  readonly size?: "sm" | "md" | "lg" | "xl";
+  readonly size?: "sm" | "md" | "lg" | "xl" | "reader";
   readonly title?: string;
   readonly ariaLabel?: string;
   readonly children: ReactNode;
+  readonly headerActions?: ReactNode;
   readonly footer?: ReactNode;
   readonly className?: string;
   readonly showHeader?: boolean;
@@ -370,6 +379,7 @@ const drawerSizes: Record<NonNullable<DrawerProps["size"]>, string> = {
   md: "w-80",
   lg: "w-96",
   xl: "w-[28rem]",
+  reader: "task-reader",
 };
 
 export function Drawer({
@@ -380,6 +390,7 @@ export function Drawer({
   title,
   ariaLabel,
   children,
+  headerActions,
   footer,
   className,
   showHeader = true,
@@ -389,6 +400,22 @@ export function Drawer({
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useDialogFocus(open, panelRef, onClose, dismissible);
+  useEffect(() => {
+    if (!open || size !== "reader") return;
+    const style = document.body.style;
+    const previous = ["overflow", "overflow-x", "overflow-y"].map((property) => ({
+      property,
+      value: style.getPropertyValue(property),
+      priority: style.getPropertyPriority(property),
+    }));
+    style.setProperty("overflow", "hidden");
+    return () => {
+      style.removeProperty("overflow");
+      for (const { property, value, priority } of previous) {
+        if (value) style.setProperty(property, value, priority);
+      }
+    };
+  }, [open, size]);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50 flex">
@@ -414,8 +441,9 @@ export function Drawer({
         )}
       >
         {showHeader ? (
-          <div className="flex shrink-0 items-center justify-between border-b border-ui-border/60 px-4 py-3">
-            {title ? <h2 id={titleId} className="text-sm font-semibold text-ui-text">{title}</h2> : null}
+          <div className="drawer-header flex shrink-0 items-center justify-between gap-3 border-b border-ui-border/60 px-4 py-3">
+            {title ? <h2 id={titleId} tabIndex={size === "reader" ? 0 : undefined} className="text-sm font-semibold text-ui-text">{title}</h2> : null}
+            {headerActions}
             <button type="button" onClick={onClose} aria-label="Close" className="focus-ring ml-auto rounded-lg p-1 text-ui-text-subtle transition-colors hover:text-ui-text">
               <X size={16} aria-hidden="true" />
             </button>

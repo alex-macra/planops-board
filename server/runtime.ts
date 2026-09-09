@@ -200,14 +200,15 @@ export async function loadBoardConfig(root: string, option?: string): Promise<{
   }
 }
 
-export async function discoverPlanningDocuments(
+async function discoverMarkdownFiles(
   root: string,
-  config: BoardConfig,
+  patterns: readonly string[],
+  exclude: readonly string[],
   options: { readonly allowEmpty?: boolean } = {},
 ): Promise<readonly string[]> {
-  const matches = await fastGlob(config.documents.include, {
+  const matches = await fastGlob([...patterns], {
     cwd: root,
-    ignore: config.documents.exclude,
+    ignore: [...exclude],
     onlyFiles: true,
     dot: false,
     followSymbolicLinks: false,
@@ -300,6 +301,57 @@ export function matchesPlanningDocumentPath(
     !config.documents.exclude.some((pattern) => matchesGlobPath(relativePath, pattern));
 }
 
+export function matchesWritablePlanningDocumentPath(
+  relativePath: string,
+  config: BoardConfig,
+): boolean {
+  return matchesPlanningDocumentPath(relativePath, config) && (
+    config.version === 1 || config.documents.writable.some((pattern) =>
+      matchesGlobPath(relativePath, pattern)
+    )
+  );
+}
+
+export async function discoverPlanningDocuments(
+  root: string,
+  config: BoardConfig,
+  options: { readonly allowEmpty?: boolean } = {},
+): Promise<readonly string[]> {
+  return discoverMarkdownFiles(root, config.documents.include, config.documents.exclude, options);
+}
+
+export async function discoverWritablePlanningDocuments(
+  root: string,
+  config: BoardConfig,
+  documents: readonly string[],
+): Promise<ReadonlySet<string>> {
+  if (config.version === 1) return new Set(documents);
+  const readable = new Set(documents);
+  const matches = await Promise.all(config.documents.writable.map(async (pattern) => {
+    if (!pattern.includes("*")) {
+      try {
+        await assertSafeRepositoryFile(root, pattern);
+      } catch (error) {
+        if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
+      }
+    }
+    return { pattern, files: await discoverMarkdownFiles(root, [pattern], [], { allowEmpty: true }) };
+  }));
+  const writable = new Set(matches.flatMap(({ files }) => files));
+  for (const file of writable) {
+    if (!readable.has(file)) {
+      throw new RuntimeConfigError(`writable file is outside the configured readable scope: ${file}`);
+    }
+  }
+  if (writable.size > 0) {
+    const unmatched = matches.find(({ files }) => files.length === 0);
+    if (unmatched) {
+      throw new RuntimeConfigError(`writable pattern did not match any readable document: ${unmatched.pattern}`);
+    }
+  }
+  return writable;
+}
+
 async function externalValidator(root: string, enabled: boolean): Promise<ExternalValidator | null> {
   if (!enabled) return null;
   const relative = ".projects-board/validate";
@@ -323,13 +375,14 @@ export async function loadBoardRuntime(options: RuntimeOptions): Promise<BoardRu
     throw new RuntimeConfigError("port must be an integer from 1024 through 65535");
   }
 
-  const [, projects, validator] = await Promise.all([
+  const [documents, projects, validator] = await Promise.all([
     discoverPlanningDocuments(repositoryRoot, config),
     config.projectsFile === undefined
       ? Promise.resolve([])
       : assertSafeRepositoryFile(repositoryRoot, config.projectsFile).then(loadProjectDefinitions),
     externalValidator(repositoryRoot, options.allowExternalValidator === true),
   ]);
+  await discoverWritablePlanningDocuments(repositoryRoot, config, documents);
   return {
     repositoryRoot,
     gitDirectory,

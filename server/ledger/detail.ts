@@ -1,5 +1,5 @@
 /** Per-task prose from `### TASK-001 - Title` blocks. */
-import { contentLines, headings, type Heading } from "./parse.ts";
+import { contentLines, headings, pythonStrip, type Heading } from "./parse.ts";
 
 /** Shared by parsing and structural validation to keep heading identity exact. */
 const ID_HEADING_RE = /^`?([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)`?(?:\s|$)/;
@@ -65,6 +65,263 @@ export interface DetailBlock {
   /** Other task IDs named in the prose. Real edges no column captures. */
   readonly references: readonly string[];
   readonly links: readonly DetailLink[];
+}
+
+const TASK_PACKET_REQUIRED_LABELS = [
+  "Readiness", "Objective", "Why", "Scope", "Starting point", "Decisions already made",
+  "Decision authority", "Contract", "Change required", "Invariants", "Non-goals",
+  "Acceptance criteria", "Verify", "Escalate, do not assume, if", "Handoff",
+] as const;
+const QWEN3_CODER_NEXT_PACKET_MARKER_RE =
+  /^#{1,6}\s+Qwen3-Coder-Next(?:\s+(?:readiness|task))?\s+packet(?:\s+-\s+\S.*)?$/;
+const ANY_QWEN_PACKET_MARKER_RE =
+  /^#{1,6}\s+Qwen(?:3-Coder-Next)?(?:\s+(?:readiness|task))?\s+packet(?:\s+-\s+\S.*)?$/i;
+const ANY_QWEN_PACKET_FIELD_MARKER_RE = /^Qwen(?:3-Coder-Next)?(?:\s+(?:readiness|task))?\s+packet$/i;
+
+interface TaskPacketFieldRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+function taskPacketFieldRanges(fields: readonly DetailField[]): TaskPacketFieldRange[] {
+  if (fields.length > 2_000) return [];
+  const ranges: TaskPacketFieldRange[] = [];
+  for (let start = 0; start < fields.length; start += 1) {
+    if (fields[start]?.label !== "Readiness") continue;
+    const offset = fields.slice(start).findIndex((field) => field.label === "Handoff");
+    if (offset === -1) continue;
+    const end = start + offset;
+    const labels = fields.slice(start, end + 1)
+      .filter((field) => TASK_PACKET_REQUIRED_LABELS.some((label) => label === field.label))
+      .map((field) => field.label);
+    if (labels.length === TASK_PACKET_REQUIRED_LABELS.length &&
+      TASK_PACKET_REQUIRED_LABELS.every((label, index) => labels[index] === label)) {
+      ranges.push({ start, end });
+    }
+  }
+  return ranges;
+}
+
+export function taskPacketFieldRange(fields: readonly DetailField[]): TaskPacketFieldRange | null {
+  return taskPacketFieldRanges(fields)[0] ?? null;
+}
+
+export function qwen3CoderNextPacketIsReady(block: DetailBlock): boolean {
+  if (block.prose.length > 2_000 || block.fields.length > 2_000) return false;
+  const genericMarkers = block.prose.filter((item) => ANY_QWEN_PACKET_MARKER_RE.test(item) &&
+    !QWEN3_CODER_NEXT_PACKET_MARKER_RE.test(item)).length +
+    block.fields.filter((field) => ANY_QWEN_PACKET_FIELD_MARKER_RE.test(field.rawLabel) &&
+      field.rawLabel !== "Qwen3-Coder-Next packet").length;
+  if (genericMarkers > 0) return false;
+  const markerCount = block.prose.filter((item) => QWEN3_CODER_NEXT_PACKET_MARKER_RE.test(item)).length +
+    block.fields.filter((field) => field.rawLabel === "Qwen3-Coder-Next packet").length;
+  if (markerCount !== 1) return false;
+  const ranges = taskPacketFieldRanges(block.fields);
+  if (ranges.length !== 1) return false;
+  const range = ranges[0]!;
+  const fields = block.fields.slice(range.start, range.end + 1);
+  const statuses = fields.flatMap((field) => field.items).filter((item) => /^Packet status:/i.test(item));
+  return statuses.length === 1 && statuses[0] === "Packet status: READY" &&
+    fields[0]!.items.includes(statuses[0]);
+}
+
+const FENCE_RE = /^ {0,3}(?<marker>`{3,}|~{3,})(?<rest>.*)$/;
+const SETEXT_HEADING_RE = /^ {0,3}(?:=+|-+)\s*$/;
+const PARAGRAPH_INTERRUPT_RE = /^ {0,3}(?:#{1,6}(?:[ \t]+|$)|>|(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$))/;
+const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/;
+const TABLE_DELIMITER_ROW_RE = /^ {0,3}\|?[ \t]*:?-{3,}:?(?:[ \t]*\|[ \t]*:?-{3,}:?)+[ \t]*\|?[ \t]*$/;
+const HTML_BLOCK_TAGS = new Set([
+  "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption",
+  "center", "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt",
+  "fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset", "h1", "h2",
+  "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "iframe", "legend", "li",
+  "link", "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup", "option", "p",
+  "param", "search", "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead",
+  "title", "tr", "track", "ul",
+]);
+
+function isFenceOpener(match: RegExpMatchArray): boolean {
+  return match.groups!["marker"]![0] === "~" || !match.groups!["rest"]!.includes("`");
+}
+
+function backtickRunEnd(text: string, start: number): number {
+  let end = start;
+  while (text[end] === "`") end += 1;
+  return end;
+}
+
+function isBackslashEscaped(text: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+function matchingBacktickRunEnd(
+  text: string,
+  searchStart: number,
+  delimiterLength: number,
+): number | null {
+  let search = searchStart;
+
+  while (search < text.length) {
+    const closingStart = text.indexOf("`", search);
+    if (closingStart === -1) return null;
+    const closingEnd = backtickRunEnd(text, closingStart);
+    if (closingEnd - closingStart === delimiterLength) return closingEnd;
+    search = closingEnd;
+  }
+  return null;
+}
+
+interface BacktickEnd {
+  readonly line: number;
+  readonly end: number;
+}
+
+function isHtmlBlockStart(text: string): boolean {
+  const content = text.match(/^ {0,3}(\S.*)$/)?.[1];
+  if (content === undefined) return false;
+  if (
+    content.startsWith("<?") ||
+    content.startsWith("<![CDATA[") ||
+    /^<![A-Z]/.test(content) ||
+    /^<(?:script|pre|style|textarea)(?:[ \t]|>|$)/i.test(content)
+  ) {
+    return true;
+  }
+  const blockTag = content.match(/^<\/?([A-Za-z][A-Za-z0-9-]*)(?:[ \t]|\/?>|$)/);
+  return blockTag !== null && HTML_BLOCK_TAGS.has(blockTag[1]!.toLowerCase());
+}
+
+function isClosedHtmlCommentBlockStart(lines: readonly string[], line: number): boolean {
+  if (!/^ {0,3}<!--/.test(lines[line]!)) return false;
+  return lines.slice(line).some((text) => text.includes("-->"));
+}
+
+function codeSpanBoundary(text: string): boolean {
+  if (
+    pythonStrip(text) === "" ||
+    PARAGRAPH_INTERRUPT_RE.test(text) ||
+    THEMATIC_BREAK_RE.test(text) ||
+    SETEXT_HEADING_RE.test(text) ||
+    TABLE_DELIMITER_ROW_RE.test(text) ||
+    isHtmlBlockStart(text)
+  ) {
+    return true;
+  }
+  const fence = text.match(FENCE_RE);
+  return fence !== null && isFenceOpener(fence);
+}
+
+function matchingBacktickEnd(
+  lines: readonly string[],
+  openingLine: number,
+  openingStart: number,
+): BacktickEnd | null {
+  const openingEnd = backtickRunEnd(lines[openingLine]!, openingStart);
+  const delimiterLength = openingEnd - openingStart;
+
+  for (let line = openingLine; line < lines.length; line += 1) {
+    const text = lines[line]!;
+    if (
+      line > openingLine &&
+      (codeSpanBoundary(text) || isClosedHtmlCommentBlockStart(lines, line))
+    ) {
+      return null;
+    }
+    const end = matchingBacktickRunEnd(
+      text,
+      line === openingLine ? openingEnd : 0,
+      delimiterLength,
+    );
+    if (end !== null) return { line, end };
+  }
+  return null;
+}
+
+function maskHtmlComments(lines: readonly string[]): readonly string[] {
+  let fenceCharacter = "";
+  let fenceLength = 0;
+  let openComment = false;
+  let codeSpanLength = 0;
+
+  const masked = lines.map((text, index) => {
+    if (fenceCharacter) {
+      const fence = text.match(FENCE_RE);
+      if (fence) {
+        const marker = fence.groups!["marker"]!;
+        if (
+          marker[0] === fenceCharacter &&
+          marker.length >= fenceLength &&
+          pythonStrip(fence.groups!["rest"]!) === ""
+        ) {
+          fenceCharacter = "";
+          fenceLength = 0;
+        }
+      }
+      return text;
+    }
+
+    if (!openComment && codeSpanLength === 0) {
+      const fence = text.match(FENCE_RE);
+      if (fence && isFenceOpener(fence)) {
+        const marker = fence.groups!["marker"]!;
+        fenceCharacter = marker[0]!;
+        fenceLength = marker.length;
+        return text;
+      }
+    }
+
+    let cursor = 0;
+    let visible = "";
+    for (;;) {
+      if (codeSpanLength > 0) {
+        const closingEnd = matchingBacktickRunEnd(text, cursor, codeSpanLength);
+        if (closingEnd === null) return visible + text.slice(cursor);
+        visible += text.slice(cursor, closingEnd);
+        codeSpanLength = 0;
+        cursor = closingEnd;
+        continue;
+      }
+      if (openComment) {
+        const end = text.indexOf("-->", cursor);
+        if (end === -1) return visible;
+        openComment = false;
+        cursor = end + 3;
+        continue;
+      }
+      const start = text.indexOf("<!--", cursor);
+      const backtick = text.indexOf("`", cursor);
+      if (backtick !== -1 && (start === -1 || backtick < start)) {
+        if (isBackslashEscaped(text, backtick)) {
+          visible += text.slice(cursor, backtick + 1);
+          cursor = backtick + 1;
+          continue;
+        }
+        const openingEnd = backtickRunEnd(text, backtick);
+        const closing = matchingBacktickEnd(lines, index, backtick);
+        if (closing === null) {
+          visible += text.slice(cursor, openingEnd);
+          cursor = openingEnd;
+        } else if (closing.line === index) {
+          visible += text.slice(cursor, closing.end);
+          cursor = closing.end;
+        } else {
+          visible += text.slice(cursor);
+          codeSpanLength = openingEnd - backtick;
+          return visible;
+        }
+        continue;
+      }
+      if (start === -1) return visible + text.slice(cursor);
+      visible += text.slice(cursor, start);
+      openComment = true;
+      cursor = start + 4;
+    }
+  });
+  return masked;
 }
 
 function headingLevel(line: string): number {
@@ -211,9 +468,10 @@ export function extractDetailBlocks(
   lines: readonly string[],
   file: string,
 ): DetailBlock[] {
-  const all: Heading[] = headings(lines);
+  const visibleLines = maskHtmlComments(lines);
+  const all: Heading[] = headings(visibleLines);
   const fenced = new Set(lines.map((_, index) => index + 1));
-  for (const content of contentLines(lines)) fenced.delete(content.line);
+  for (const content of contentLines(visibleLines)) fenced.delete(content.line);
 
   const blocks: DetailBlock[] = [];
 
@@ -221,22 +479,21 @@ export function extractDetailBlocks(
     const match = heading.text.match(ID_HEADING_RE);
     if (!match) return;
 
-    const level = headingLevel(lines[heading.line - 1] ?? "");
-    // The block runs to the next heading at the same level or higher; a deeper
-    // heading would be part of this task's own prose.
+    const level = headingLevel(visibleLines[heading.line - 1] ?? "");
     const next = all
       .slice(index + 1)
-      .find((candidate) => headingLevel(lines[candidate.line - 1] ?? "") <= level);
+      .find((candidate) => ID_HEADING_RE.test(candidate.text) ||
+        headingLevel(visibleLines[candidate.line - 1] ?? "") <= level);
     const lastLine = (next ? next.line - 1 : lines.length);
 
     const bodyLines = [];
     for (let line = heading.line + 1; line <= lastLine; line += 1) {
-      bodyLines.push({ line, text: lines[line - 1] ?? "", fenced: fenced.has(line) });
+      bodyLines.push({ line, text: visibleLines[line - 1] ?? "", fenced: fenced.has(line) });
     }
 
     let endLine = heading.line;
     for (const body of bodyLines) {
-      if (body.text.trim().length > 0) endLine = body.line;
+      if ((lines[body.line - 1] ?? "").trim().length > 0) endLine = body.line;
     }
 
     const title = heading.text

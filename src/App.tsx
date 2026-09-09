@@ -45,7 +45,7 @@ const Graph = lazy(async () => ({ default: (await import("./views/Graph.tsx")).G
 
 const VIEWS = [
   { value: "now", label: "Now" },
-  { value: "stories", label: "Stories" },
+  { value: "stories", label: "Roadmap" },
   { value: "rollup", label: "Rollup" },
   { value: "kanban", label: "Board" },
   { value: "backlog", label: "Backlog" },
@@ -61,7 +61,7 @@ const GROUPS = [
 
 const VIEW_DESCRIPTION: Record<ViewId, string> = {
   now: "Prioritized queries over current tasks.",
-  stories: "Outcomes grouped by story and enabler.",
+  stories: "Roadmap grouped by project, epic, and story or enabler.",
   rollup: "Project coverage, activity, and data quality at a glance.",
   kanban: "Move tasks between configured statuses.",
   backlog: "Search and compare all discovered tasks.",

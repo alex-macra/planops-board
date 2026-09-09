@@ -46,6 +46,10 @@ function task(id: string, partial: Partial<Task> = {}): Task {
     priorityCell: null,
     outcomeCell: null,
     readiness: "startable",
+    writable: true, storyId: null, qwen3CoderNextReady: false,
+    packetMetadata: { workKind: null, estimatedChangedLoc: null, sizeException: null, splitTaskIds: [], files: [], issues: [] },
+    executionReadiness: "unassessed", workKind: null, estimatedChangedLoc: null, sizeException: null,
+    readinessCheckedAt: null, executionBlockers: [],
     ...partial,
   };
 }

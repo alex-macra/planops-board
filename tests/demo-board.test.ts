@@ -42,7 +42,12 @@ describe("fictional demo board", () => {
     const response = await handleApi(runtime, "GET", "/api/board", undefined);
     const parsed = boardSchema.safeParse(response.body);
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.documents[0]?.vocabulary).not.toHaveProperty("meanings");
+    if (parsed.success) {
+      expect(parsed.data.documents[0]?.vocabulary).not.toHaveProperty("meanings");
+      expect(parsed.data.documents.every((document) => document.writable)).toBe(true);
+      expect(parsed.data.tasks.every((task) => task.executionReadiness === "unassessed")).toBe(true);
+      expect(parsed.data.qwenReadiness.status).toBe("missing");
+    }
   });
 
   it("keeps a status qualifier separate from its configured base", async () => {

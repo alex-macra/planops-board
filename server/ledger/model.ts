@@ -11,8 +11,13 @@ import { createHash } from "node:crypto";
 import { compareText } from "../../shared/compare.ts";
 import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../../shared/config.ts";
 import type { DataQualityIssueKind } from "../../shared/data-quality.ts";
-import { extractDetailBlocks, type DetailBlock } from "./detail.ts";
+import { extractDetailBlocks, qwen3CoderNextPacketIsReady, type DetailBlock } from "./detail.ts";
 import { extractTables, pythonStrip, type Table, type TableRow } from "./parse.ts";
+import {
+  assessTaskExecution, boardRevision, missingQwenReadinessSource, qwenReadinessSummary,
+  taskPacketMetadata, type QwenReadinessSource, type QwenReadinessSummary,
+  type TaskExecutionAssessment, type TaskPacketMetadata,
+} from "./qwen-readiness.ts";
 import {
   primaryProjectOf,
   projectsOf,
@@ -75,9 +80,13 @@ export interface CellRef {
   readonly column: number;
 }
 
-export interface Task {
+export interface Task extends TaskExecutionAssessment {
   readonly id: string;
   readonly file: string;
+  readonly writable: boolean;
+  readonly storyId: string | null;
+  readonly qwen3CoderNextReady: boolean;
+  readonly packetMetadata: TaskPacketMetadata;
   readonly epic: string;
   readonly section: string | null;
   /** From the row's `### ID - Title` block. */
@@ -118,6 +127,7 @@ export interface Finding {
 
 export interface DocumentSummary {
   readonly path: string;
+  readonly writable: boolean;
   readonly title: string;
   readonly sha256: string;
   readonly vocabulary: StatusVocabulary;
@@ -134,16 +144,9 @@ export interface DataQualityIssue {
 
 export interface Board {
   readonly generatedAt: string;
-  /**
-   * A digest of exactly the bytes this board was built from.
-   *
-   * Derived from the documents rather than stamped with a clock, so two loads of
-   * an unchanged corpus produce the same value. That is what lets a tab tell
-   * "the disk moved" from "I wrote this myself" without issuing tokens or
-   * tracking its own requests - after a write's own reload the two already
-   * agree. `generatedAt` cannot do the job: it changes on every call.
-   */
+  readonly planRevision: string;
   readonly revision: string;
+  readonly qwenReadiness: QwenReadinessSummary;
   readonly documents: readonly DocumentSummary[];
   readonly projects: readonly ProjectSummary[];
   readonly tasks: readonly Task[];
@@ -163,6 +166,7 @@ export interface Board {
 
 export interface SourceDocument {
   readonly path: string;
+  readonly writable?: boolean;
   readonly text: string;
   readonly sha256: string;
 }
@@ -343,30 +347,42 @@ function rawRecord(header: readonly string[], row: TableRow): Record<string, str
   return record;
 }
 
+function groupById<T extends { readonly id: string }>(items: readonly T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const matches = groups.get(item.id);
+    if (matches) matches.push(item);
+    else groups.set(item.id, [item]);
+  }
+  return groups;
+}
+
 export function buildBoard(
   documents: readonly SourceDocument[],
   knownRepositories: ReadonlySet<string>,
   projectDefinitions: readonly ProjectDefinition[] = [],
   generatedAt: string = new Date().toISOString(),
   workflow: WorkflowConfig = DEFAULT_WORKFLOW,
+  qwenSource: QwenReadinessSource = missingQwenReadinessSource(),
 ): Board {
   const summaries: DocumentSummary[] = [];
   const findings: Finding[] = [];
   const issues: DataQualityIssue[] = [];
   const details: DetailBlock[] = [];
   const stories: Story[] = [];
-  const drafts: (Omit<Task, "dependencies" | "dependencyResidue" | "readiness"> & {
+  const drafts: (Omit<Task, "dependencies" | "dependencyResidue" | "readiness" |
+    "title" | "storyId" | "qwen3CoderNextReady" | "packetMetadata" | keyof TaskExecutionAssessment> & {
     pending: ParsedDependencies;
   })[] = [];
 
   for (const document of documents) {
+    const writable = document.writable !== false;
     const lines = document.text.split("\n");
     const tables = extractTables(lines);
     const vocabulary = documentVocabulary(tables, workflow.statusOrder);
     const epic = lines.find((line) => line.startsWith("# "))?.slice(2).trim() ?? document.path;
 
     const blocks = extractDetailBlocks(lines, document.path);
-    const titles = new Map(blocks.map((block) => [block.id, block.title]));
     details.push(...blocks);
 
     for (const block of blocks) {
@@ -451,9 +467,9 @@ export function buildBoard(
         drafts.push({
           id,
           file: document.path,
+          writable,
           epic,
           section: table.section,
-          title: titles.get(id) ?? null,
           line: row.line,
           status,
           statusBase: parsed.base,
@@ -467,15 +483,15 @@ export function buildBoard(
           outcome: cellAt(row, outcomeIndex),
           raw: rawRecord(table.header, row),
           statusCell:
-            statusIndex === -1
+            !writable || statusIndex === -1
               ? null
               : { file: document.path, line: row.line, column: statusIndex },
           priorityCell:
-            priorityIndex === -1
+            !writable || priorityIndex === -1
               ? null
               : { file: document.path, line: row.line, column: priorityIndex },
           outcomeCell:
-            outcomeIndex === -1
+            !writable || outcomeIndex === -1
               ? null
               : { file: document.path, line: row.line, column: outcomeIndex },
           pending,
@@ -486,6 +502,7 @@ export function buildBoard(
 
     summaries.push({
       path: document.path,
+      writable,
       title: epic,
       sha256: document.sha256,
       vocabulary,
@@ -493,12 +510,12 @@ export function buildBoard(
     });
   }
 
-  const draftsById = new Map<string, typeof drafts>();
-  for (const draft of drafts) {
-    const matches = draftsById.get(draft.id);
-    if (matches) matches.push(draft);
-    else draftsById.set(draft.id, [draft]);
-  }
+  const draftsById = groupById(drafts);
+  const detailsById = groupById(details);
+  const storyHeadingsById = groupById(details.filter((block) => isStoryId(block.id)));
+  const claimsByTaskId = groupById(stories.flatMap((story) =>
+    story.taskIds.map((id) => ({ id, story })),
+  ));
   const uniqueIds = new Set(
     [...draftsById.entries()].flatMap(([id, matches]) => (matches.length === 1 ? [id] : [])),
   );
@@ -534,30 +551,47 @@ export function buildBoard(
     });
   }
 
-  // A task in two stories would make both progress summaries ambiguous.
-  const claimedBy = new Map<string, string>();
-  for (const story of stories) {
-    for (const taskId of story.taskIds) {
-      if (!byId.has(taskId)) {
+  for (const [id, headings] of storyHeadingsById) {
+    if (headings.length === 1) continue;
+    for (const heading of headings) {
+      issues.push({
+        kind: "story-member-shared",
+        taskId: id,
+        file: heading.file,
+        line: heading.headingLine,
+        detail: `story identity ${id} has ${headings.length} headings, so none can own tasks`,
+      });
+    }
+  }
+  for (const [taskId, claims] of claimsByTaskId) {
+    const member = byId.get(taskId);
+    for (const { story } of claims) {
+      if (!member) {
         issues.push({
           kind: "story-member-unknown",
           taskId: story.id,
           file: story.file,
           line: story.headingLine,
-          detail: `delivers ${taskId}, which no ledger row defines`,
+          detail: `delivers ${taskId}, which ${draftsById.get(taskId)?.length ?? 0} ledger rows define instead of exactly one`,
         });
-        continue;
+      } else if (member.file !== story.file) {
+        issues.push({
+          kind: "story-member-cross-file",
+          taskId: story.id,
+          file: story.file,
+          line: story.headingLine,
+          detail: `delivers ${taskId} from ${member.file}; a parent must be in the same file`,
+        });
       }
-      const owner = claimedBy.get(taskId);
-      if (owner) {
+      if (claims.length > 1) {
         issues.push({
           kind: "story-member-shared",
           taskId: story.id,
           file: story.file,
           line: story.headingLine,
-          detail: `delivers ${taskId}, which ${owner} already claims`,
+          detail: `delivers ${taskId}, which ${claims.length} story headings claim; no parent is assigned`,
         });
-      } else claimedBy.set(taskId, story.id);
+      }
     }
   }
 
@@ -565,7 +599,7 @@ export function buildBoard(
   const blockedStatuses = new Set(workflow.blockedStatuses);
   const closedStatuses = new Set(workflow.closedStatuses);
   const dependencySatisfiedStatuses = new Set(workflow.dependencySatisfiedStatuses);
-  const tasks: Task[] = drafts.map((draft) => {
+  const baseTasks: Omit<Task, keyof TaskExecutionAssessment>[] = drafts.map((draft) => {
     const seenDependencies = new Set<string>();
     const dependencies: Dependency[] = draft.pending.dependencies.map((dependency) => {
       const matches = draftsById.get(dependency.id) ?? [];
@@ -633,6 +667,28 @@ export function buildBoard(
     }
 
     const closed = draft.statusBase !== null && closedStatuses.has(draft.statusBase);
+    const claims = claimsByTaskId.get(draft.id) ?? [];
+    const parent = claims.length === 1 ? claims[0]!.story : null;
+    const storyId = uniqueIds.has(draft.id) && parent?.file === draft.file &&
+      storyHeadingsById.get(parent.id)?.length === 1 ? parent.id : null;
+    if (!closed && storyId === null) {
+      issues.push({
+        kind: "story-member-unassigned",
+        taskId: draft.id,
+        file: draft.file,
+        line: draft.line,
+        detail: "unfinished task has no unambiguous same-file Story or Enabler parent",
+      });
+    }
+    const localDetails = (detailsById.get(draft.id) ?? []).filter((block) => block.file === draft.file);
+    const detail = uniqueIds.has(draft.id) && localDetails.length === 1 ? localDetails[0]! : null;
+    const ambiguity = !uniqueIds.has(draft.id)
+      ? "task identity matches multiple ledger rows"
+      : localDetails.length > 1 ? "task has multiple same-file detail blocks" : null;
+    const metadata = taskPacketMetadata(detail);
+    const packetMetadata = ambiguity === null ? metadata : Object.freeze({
+      ...metadata, issues: Object.freeze([ambiguity]),
+    });
     const needsGateCheck =
       !draft.statusValid ||
       !activeStatuses.has(draft.statusBase ?? "") ||
@@ -658,9 +714,13 @@ export function buildBoard(
     const { pending: _pending, ...rest } = draft;
     return {
       ...rest,
+      title: detail?.title ?? null,
+      storyId,
+      qwen3CoderNextReady: detail !== null && qwen3CoderNextPacketIsReady(detail),
+      packetMetadata,
       dependencies,
       dependencyResidue: draft.pending.residue,
-      readiness: closed
+      readiness: !draft.writable || closed
         ? null
         : needsGateCheck
           ? "needs-gate-check"
@@ -670,13 +730,25 @@ export function buildBoard(
     };
   });
 
+  const planRevision = revisionOf(documents);
+  const taskIndex = new Map(baseTasks.filter((task) => uniqueIds.has(task.id)).map((task) => [task.id, task]));
+  const tasks: Task[] = baseTasks.map((task) => {
+    const assessment: TaskExecutionAssessment = uniqueIds.has(task.id)
+      ? assessTaskExecution(task, taskIndex, details, qwenSource, planRevision)
+      : { executionReadiness: "blocked", workKind: null, estimatedChangedLoc: null, sizeException: null,
+        readinessCheckedAt: null, executionBlockers: ["task identity matches multiple ledger rows"] };
+    return { ...task, ...assessment };
+  });
+
   const statusBases = [
     ...new Set(tasks.flatMap((task) => (task.statusBase === null ? [] : [task.statusBase]))),
   ];
 
   return {
     generatedAt,
-    revision: revisionOf(documents),
+    planRevision,
+    revision: boardRevision(planRevision, qwenSource),
+    qwenReadiness: qwenReadinessSummary(qwenSource),
     documents: summaries,
     projects: summariseProjects(tasks, projectDefinitions),
     tasks,

@@ -6,7 +6,11 @@ import { promisify } from "node:util";
 
 import { sanitizedGitEnvironment } from "../git-command.ts";
 import type { BoardRuntime } from "../runtime.ts";
-import { assertSafeRepositoryFile, discoverPlanningDocuments } from "../runtime.ts";
+import {
+  assertSafeRepositoryFile,
+  discoverPlanningDocuments,
+  discoverWritablePlanningDocuments,
+} from "../runtime.ts";
 import { sha256 } from "./corpus.ts";
 import { acquireLedgerLock, type LockOptions } from "./lock.ts";
 import {
@@ -179,8 +183,15 @@ export async function applyWrite(
   return exclusive(runtime.repositoryRoot, async () => {
     const lock = await acquireLedgerLock(runtime.repositoryRoot, options.lock ?? {});
     try {
-      const writableFiles = new Set(
-        await discoverPlanningDocuments(runtime.repositoryRoot, runtime.config, { allowEmpty: true }),
+      const documents = await discoverPlanningDocuments(
+        runtime.repositoryRoot,
+        runtime.config,
+        { allowEmpty: true },
+      );
+      const writableFiles = await discoverWritablePlanningDocuments(
+        runtime.repositoryRoot,
+        runtime.config,
+        documents,
       );
       if (!writableFiles.has(request.file)) {
         throw new ForbiddenPathError(`${request.file} is not an editable planning document`);

@@ -1,11 +1,16 @@
 import { watch, type FSWatcher } from "node:fs";
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import fastGlob from "fast-glob";
 
 import { gitFingerprint, planningGitAllowlist } from "./git.ts";
 import { planningDocuments } from "./ledger/corpus.ts";
 import { revisionOf } from "./ledger/model.ts";
+import {
+  boardRevision,
+  loadQwenReadinessSource,
+  QWEN_READINESS_PATH,
+} from "./ledger/qwen-readiness.ts";
 import { assertSafeRepositoryDirectory, type BoardRuntime } from "./runtime.ts";
 
 export interface CorpusState {
@@ -56,19 +61,23 @@ function documentWatchRoots(runtime: BoardRuntime): DocumentWatchRoot[] {
 
 export async function readCorpusState(runtime: BoardRuntime): Promise<CorpusState> {
   const documents = await planningDocuments(runtime);
-  const allowedFiles = await planningGitAllowlist(
-    runtime,
-    new Set(documents.map((document) => document.path)),
-  );
+  const [source, allowedFiles] = await Promise.all([
+    loadQwenReadinessSource(runtime.repositoryRoot),
+    planningGitAllowlist(
+      runtime,
+      new Set(documents.filter((document) => document.writable !== false).map((document) => document.path)),
+    ),
+  ]);
   const git = await gitFingerprint(runtime, allowedFiles);
-  return { corpus: revisionOf(documents), git };
+  return { corpus: boardRevision(revisionOf(documents), source), git };
 }
 
 export function watchCorpus(runtime: BoardRuntime, options: WatchOptions = {}): CorpusWatcher {
   const debounceMs = options.debounceMs ?? DEBOUNCE_MS;
   const listeners = new Set<(state: CorpusState) => void>();
   let documentWatchers: FSWatcher[] = [];
-  const gitWatchers: FSWatcher[] = [];
+  const metadataWatchers: FSWatcher[] = [];
+  let manifestWatcher: FSWatcher | null = null;
   let last: CorpusState | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let rebuildTimer: ReturnType<typeof setTimeout> | null = null;
@@ -78,17 +87,25 @@ export function watchCorpus(runtime: BoardRuntime, options: WatchOptions = {}): 
   let readRetryMs = WATCH_RETRY_MS;
   let rebuilding = false;
   let rebuildQueued = false;
+  let reconcilingManifest = false;
+  let reconcileManifestAgain = false;
+  const manifestParentName = path.dirname(QWEN_READINESS_PATH);
+  const manifestParent = path.join(runtime.repositoryRoot, manifestParentName);
 
   const publish = (next: CorpusState): void => {
     if (closed) return;
     const previous = last;
     last = next;
     if (previous !== null && next.corpus === previous.corpus && next.git === previous.git) return;
-    for (const listener of [...listeners]) listener(next);
+    for (const listener of [...listeners]) {
+      if (closed) break;
+      listener(next);
+    }
   };
 
   const settle = (): void => {
     timer = null;
+    if (closed) return;
     if (reading) {
       againAfterRead = true;
       return;
@@ -227,38 +244,114 @@ export function watchCorpus(runtime: BoardRuntime, options: WatchOptions = {}): 
     }
   };
 
-  const attachGit = (directory: string, accept: (name: string) => boolean): void => {
+  const attach = (
+    directory: string,
+    accept: (name: string) => boolean,
+    changed: () => void = bump,
+  ): FSWatcher | null => {
     try {
       const watcher = watch(directory, (_event, name) => {
-        if (name === null || accept(String(name))) bump();
+        if (name === null || accept(String(name))) changed();
       });
       watcher.on("error", () => undefined);
-      gitWatchers.push(watcher);
+      return watcher;
     } catch {
-      // Live Git refresh is best-effort when the filesystem cannot be watched.
+      return null;
     }
   };
 
+  const manifestParentIdentity = async () => {
+    const [metadata, canonical] = await Promise.all([
+      lstat(manifestParent),
+      realpath(manifestParent),
+    ]);
+    return metadata.isDirectory() && !metadata.isSymbolicLink() && canonical === manifestParent
+      ? { dev: metadata.dev, ino: metadata.ino, canonical }
+      : null;
+  };
+
+  const reconcileManifest = (recoveryAllowance: 0 | 1 = 1): void => {
+    if (closed) return;
+    if (reconcilingManifest) {
+      reconcileManifestAgain = true;
+      return;
+    }
+    reconcilingManifest = true;
+    let retryNeeded = false;
+    manifestWatcher?.close();
+    manifestWatcher = null;
+    void manifestParentIdentity().then(async (before) => {
+      if (closed || before === null) return;
+      const candidate = attach(
+        manifestParent,
+        (name) => name === path.basename(QWEN_READINESS_PATH),
+      );
+      manifestWatcher = candidate;
+      if (candidate === null) return;
+      const after = await manifestParentIdentity().catch(() => null);
+      if (closed) return;
+      if (
+        after === null ||
+        after.dev !== before.dev ||
+        after.ino !== before.ino ||
+        after.canonical !== before.canonical
+      ) {
+        if (manifestWatcher === candidate) {
+          candidate.close();
+          manifestWatcher = null;
+        }
+        retryNeeded = recoveryAllowance === 1;
+      }
+    }, () => undefined).finally(() => {
+      reconcilingManifest = false;
+      if (closed) return;
+      bump();
+      if (reconcileManifestAgain) {
+        reconcileManifestAgain = false;
+        reconcileManifest();
+      } else if (retryNeeded) {
+        reconcileManifest(0);
+      }
+    });
+  };
+
   void rebuildDocumentWatchers().catch(() => scheduleRebuild(WATCH_RETRY_MS));
-  attachGit(runtime.gitDirectory, (name) => GIT_FILES.has(name));
+  const rootWatcher = attach(
+    runtime.repositoryRoot,
+    (name) => name === manifestParentName,
+    () => {
+      bump();
+      reconcileManifest();
+    },
+  );
+  if (rootWatcher) metadataWatchers.push(rootWatcher);
+  const gitWatcher = attach(runtime.gitDirectory, (name) => GIT_FILES.has(name));
+  if (gitWatcher) metadataWatchers.push(gitWatcher);
+  reconcileManifest();
   settle();
 
   return {
     subscribe(listener) {
+      if (closed) return () => undefined;
       listeners.add(listener);
       if (last !== null) listener(last);
       return () => listeners.delete(listener);
     },
     close() {
+      if (closed) return;
       closed = true;
       if (timer) clearTimeout(timer);
       if (rebuildTimer) clearTimeout(rebuildTimer);
       timer = null;
       rebuildTimer = null;
+      againAfterRead = false;
+      reconcileManifestAgain = false;
+      manifestWatcher?.close();
+      manifestWatcher = null;
       listeners.clear();
-      for (const watcher of [...documentWatchers, ...gitWatchers]) watcher.close();
+      for (const watcher of [...documentWatchers, ...metadataWatchers]) watcher.close();
       documentWatchers.length = 0;
-      gitWatchers.length = 0;
+      metadataWatchers.length = 0;
     },
   };
 }

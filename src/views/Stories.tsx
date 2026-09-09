@@ -1,5 +1,5 @@
-import type { JSX } from "react";
-import { useMemo } from "react";
+import type { JSX, ReactNode } from "react";
+import { useMemo, useState } from "react";
 
 import type { Board, Task } from "../api.ts";
 import { Pill } from "../components/Pill.tsx";
@@ -34,10 +34,29 @@ export function storyLine(view: StoryView): JSX.Element {
   );
 }
 
+interface DisclosureProps {
+  readonly label: string;
+  readonly className: string;
+  readonly summary: ReactNode;
+  readonly children: ReactNode;
+  readonly initiallyOpen?: boolean;
+}
+
+function Disclosure({ label, className, summary, children, initiallyOpen = false }: DisclosureProps): JSX.Element {
+  const [open, setOpen] = useState(initiallyOpen);
+  return <details className={`roadmap-disclosure ${className}`} aria-label={label} open={open}
+    onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary className="focus-ring">{summary}</summary>
+    <div className="roadmap-body">{children}</div>
+  </details>;
+}
+
 function Card({ view, onOpen }: { view: StoryView; onOpen: () => void }): JSX.Element {
   const edge = view.state === "blocked" ? "story-card-blocked" : "";
+  const source = `${view.story.file} line ${view.story.headingLine}`;
+  const kind = view.story.kind === "enabler" ? "Enabler" : "Story";
   return (
-    <button type="button" className={`story-card focus-ring ${edge}`} onClick={onOpen}>
+    <Disclosure className={`roadmap-outcome ${edge}`} label={`${kind} ${view.story.id} from ${source}`} summary={<>
       <span className="story-card-top">
         <span className="story-card-id">{view.story.id}</span>
         <span className="story-kind">{view.story.kind}</span>
@@ -52,7 +71,7 @@ function Card({ view, onOpen }: { view: StoryView; onOpen: () => void }): JSX.El
 
       <span className="story-foot">
         <span>
-          {storyProgressLabel(view)}
+          Full group: {storyProgressLabel(view)}
           {view.missing.length > 0 ? ` · ${view.missing.length} unknown` : ""}
         </span>
         {view.next ? (
@@ -61,7 +80,11 @@ function Card({ view, onOpen }: { view: StoryView; onOpen: () => void }): JSX.El
           </span>
         ) : null}
       </span>
-    </button>
+      <span className="roadmap-source">{source}</span>
+    </>}>
+      <button type="button" className="focus-ring text-sm text-ui-accent hover:underline"
+        aria-label={`Open story ${view.story.id} from ${source}`} onClick={onOpen}>Open story</button>
+    </Disclosure>
   );
 }
 
@@ -81,14 +104,28 @@ export function Stories({ board, tasks, onSelectStory, onOpenBacklog }: Props): 
       if (bucket) bucket.push(view);
       else byProject.set(key, [view]);
     }
+    const documents = new Map(board.documents.map((document) => [document.path, document]));
     return (
       [...byProject.entries()]
-        .map(([id, stories]) => ({
-          id,
-          label: projects.get(id)?.label ?? id,
-          parked: projects.get(id)?.parked ?? null,
-          stories,
-        }))
+        .map(([id, stories]) => {
+          const project = projects.get(id);
+          const byFile = new Map<string, StoryView[]>();
+          for (const view of stories) {
+            const bucket = byFile.get(view.story.file);
+            if (bucket) bucket.push(view);
+            else byFile.set(view.story.file, [view]);
+          }
+          return {
+            id,
+            label: project?.label.trim() ? project.label : id,
+            parked: project?.parked ?? null,
+            stories,
+            epics: [...byFile].map(([file, members]) => {
+              const document = documents.get(file);
+              return { file, stories: members, label: document?.title.trim() ? document.title : file };
+            }),
+          };
+        })
         .sort(
           (a, b) =>
             Number(a.parked !== null) - Number(b.parked !== null) ||
@@ -96,12 +133,12 @@ export function Stories({ board, tasks, onSelectStory, onOpenBacklog }: Props): 
             a.label.localeCompare(b.label),
         )
     );
-  }, [board.projects, views]);
+  }, [board.projects, board.documents, views]);
 
   const uncovered = useMemo(() => unassignedTasks(board, tasks), [board, tasks]);
 
   return (
-    <div className="space-y-6">
+    <div className="roadmap-hierarchy space-y-6">
       <div className="rollup-context">
         <p>
           {views.length} {views.length === 1 ? "story" : "stories"} over{" "}
@@ -115,38 +152,37 @@ export function Stories({ board, tasks, onSelectStory, onOpenBacklog }: Props): 
       </div>
 
       {lanes.map((lane) => (
-        <section className="story-lane" key={lane.id}>
-          <div className="story-lane-head">
-            <h2>{lane.label}</h2>
-            <span>
-              {lane.stories.length} {lane.stories.length === 1 ? "story" : "stories"}
-            </span>
+        <Disclosure className="roadmap-project" key={lane.id} label={`Project ${lane.label}`} initiallyOpen summary={<>
+          <span className="roadmap-heading"><span className="view-eyebrow">Project</span><strong>{lane.label}</strong></span>
+          <span className="roadmap-count">{lane.epics.length} {lane.epics.length === 1 ? "epic" : "epics"} ·{" "}
+            {lane.stories.length} {lane.stories.length === 1 ? "outcome" : "outcomes"}</span>
             {lane.parked ? (
               <span className="pill pill-deferred">parked {lane.parked.since}</span>
             ) : null}
-          </div>
-          <div className="story-grid">
-            {lane.stories.map((view) => (
-              <Card key={view.story.id} view={view} onOpen={() => onSelectStory(view.story.id)} />
-            ))}
-          </div>
-        </section>
+        </>}>
+          {lane.epics.map((epic) => <Disclosure className="roadmap-epic" key={JSON.stringify([lane.id, epic.file])}
+            label={`Epic ${epic.file} in ${lane.id}`} initiallyOpen summary={<>
+              <span className="roadmap-heading"><span className="view-eyebrow">Epic</span><strong>{epic.label}</strong>
+                <span className="roadmap-source">{epic.file}</span></span>
+              <span className="roadmap-count">{epic.stories.length} {epic.stories.length === 1 ? "outcome" : "outcomes"}</span>
+            </>}>
+            {epic.stories.map((view) => <Card key={JSON.stringify([view.story.file, view.story.id, view.story.headingLine])}
+              view={view} onOpen={() => onSelectStory(view.story.id)} />)}
+          </Disclosure>)}
+        </Disclosure>
       ))}
 
       {uncovered.length > 0 ? (
         <div className="now-folded">
           <b>Not in a story yet:</b>
           <span className="tabular">{uncovered.length} rows</span>
-          <span>
-            · coverage is deliberately optional, so the gap is shown rather than hidden and shrinks
-            as sentences land.
-          </span>
+          <span>Your current project scope and row filters remain in effect when opening the backlog.</span>
           <button
             type="button"
             className="focus-ring ml-auto text-ui-accent hover:underline"
             onClick={onOpenBacklog}
           >
-            Open them in the backlog
+            Open backlog
           </button>
         </div>
       ) : null}

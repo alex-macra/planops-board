@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import type { Board, DetailField, Task } from "../api.ts";
-import { detailOf, vocabularyOf } from "../api.ts";
+import { vocabularyOf } from "../api.ts";
 import { buildDependencyGraph, type DependencyDisplayEdge } from "../dependency-graph.ts";
 import { readinessReasons } from "../readiness.ts";
 import { stampDateOf, withoutStamp } from "../../shared/stamp.ts";
@@ -12,6 +12,7 @@ import { parseStatusValue } from "../../shared/status.ts";
 import { Notice } from "./Notice.tsx";
 import { StatusTag, Tag } from "./Tag.tsx";
 import { TaskActivity } from "./TaskActivity.tsx";
+import { TaskReaderContent, type ReaderTab } from "./TaskReaderContent.tsx";
 import { priorityTone, statusTone } from "./tone.ts";
 
 export type TaskDrawerMode =
@@ -43,8 +44,13 @@ const MODELLED_HEADERS = new Set([
   "Dependencies",
 ]);
 
-/** Rendered above the fold as the description; the rest keep their own labels. */
-const LEAD_FIELD = "Scope";
+const READER_WIDTHS = ["50", "60", "75", "100"] as const;
+const READER_WIDTH_CLASSES = {
+  "50": "task-reader-50",
+  "60": "task-reader-60",
+  "75": "task-reader-75",
+  "100": "task-reader-100",
+} as const;
 
 function uncertaintyLabels(edge: DependencyDisplayEdge): readonly string[] {
   return edge.uncertainty.flatMap((kind) => {
@@ -82,6 +88,8 @@ function Prose({
   readonly text: string;
   readonly onSelectTask: (taskId: string) => void;
 }): JSX.Element {
+  if (text.includes("\n")) return <pre tabIndex={0} role="region" aria-label="Code excerpt"
+    className="focus-ring mono overflow-x-auto rounded-lg bg-ui-bg-muted p-2 text-xs">{text}</pre>;
   const parts = text.split(/`([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)`/g);
   return (
     <>
@@ -120,9 +128,9 @@ function Field({
         ) : null}
       </h3>
       {field.items.length === 1 ? (
-        <p className="text-sm leading-relaxed text-ui-text">
+        <div className="text-sm leading-relaxed text-ui-text">
           <Prose text={field.items[0]!} onSelectTask={onSelectTask} />
-        </p>
+        </div>
       ) : (
         <ul className="ml-4 list-disc space-y-1 text-sm leading-relaxed text-ui-text marker:text-ui-text-subtle">
           {field.items.map((item, index) => (
@@ -149,14 +157,18 @@ export function TaskDrawer({
   const [base, setBase] = useState("");
   const [qualifier, setQualifier] = useState("");
   const [priority, setPriority] = useState("");
+  const [readerWidth, setReaderWidth] = useState<(typeof READER_WIDTHS)[number]>("60");
+  const [activeTab, setActiveTab] = useState<ReaderTab>("Overview");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<{ message: string; details?: string } | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [copyFallback, setCopyFallback] = useState<{ readonly label: string; readonly value: string } | null>(null);
   const drawerFocusTarget = useRef<HTMLDivElement>(null);
-  const activeTaskId = useRef<string | null>(task?.id ?? null);
+  const taskIdentity = task ? JSON.stringify([task.file, task.id]) : null;
+  const activeTaskId = useRef(taskIdentity);
   const copyRequest = useRef(0);
-  activeTaskId.current = task?.id ?? null;
+  const taskGeneration = useRef(0);
+  activeTaskId.current = taskIdentity;
 
   useEffect(() => {
     setBase(task?.statusBase ?? "");
@@ -165,30 +177,39 @@ export function TaskDrawer({
     setFailure(null);
     setCopyMessage(null);
     setCopyFallback(null);
-  }, [task?.id]);
+    setBusy(false);
+    setActiveTab("Overview");
+    copyRequest.current += 1;
+    taskGeneration.current += 1;
+    const body = drawerFocusTarget.current?.closest(".task-reader-body");
+    if (body) body.scrollTop = 0;
+  }, [taskIdentity]);
 
   useEffect(() => {
     setBase(task?.statusBase ?? "");
     setQualifier(task?.statusQualifier ?? "");
-  }, [task?.id, task?.status]);
+  }, [taskIdentity, task?.status]);
 
   useEffect(() => {
     setPriority(task?.priority ?? "");
-  }, [task?.id, task?.priority]);
+  }, [taskIdentity, task?.priority]);
 
   useEffect(() => {
     if (!task) return;
     const frame = window.requestAnimationFrame(() => drawerFocusTarget.current?.focus());
     return () => window.cancelAnimationFrame(frame);
-  }, [task?.id]);
+  }, [taskIdentity]);
 
   if (!task) return null;
 
-  const detail = detailOf(board, task.id);
-  const lead = detail?.fields.find((field) => field.label === LEAD_FIELD) ?? null;
-  // Notes have their own place in the activity section, below.
-  const otherFields =
-    detail?.fields.filter((field) => field !== lead && field.label !== "Note") ?? [];
+  const details = board.details.filter((item) => item.id === task.id);
+  const localDetails = details.filter((item) => item.file === task.file);
+  const detail = localDetails.length === 1 ? localDetails[0]! : null;
+  const rows = board.tasks.filter((item) => item.id === task.id);
+  const ownsNotes = rows.length === 1 && rows[0]!.file === task.file && rows[0]!.line === task.line &&
+    localDetails.length <= 1 && details.every((item) => item.file === task.file);
+  const stories = board.stories.filter((story) => story.file === task.file && story.taskIds.includes(task.id));
+  const story = stories.length === 1 ? stories[0]! : null;
   // Only http links: a relative one points into the repository, where a browser
   // tab cannot follow it anyway.
   const links = (detail?.links ?? []).filter((link) => /^https?:/.test(link.href));
@@ -225,23 +246,26 @@ export function TaskDrawer({
   const summary = taskSummary(task, { sourceRef, sourceSha, canonicalUrl });
 
   async function save(action: () => Promise<void>): Promise<void> {
+    const generation = taskGeneration.current;
+    const current = () => generation === taskGeneration.current && taskIdentity === activeTaskId.current;
     setBusy(true);
     setFailure(null);
     try {
       await action();
     } catch (error) {
+      if (!current()) return;
       const failureBody = (error as { failure?: { error: string; details?: string } }).failure;
       setFailure({
         message: failureBody?.error ?? String(error),
         ...(failureBody?.details ? { details: failureBody.details } : {}),
       });
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   }
 
   async function copy(label: string, value: string): Promise<void> {
-    const requestedFor = task?.id;
+    const requestedFor = taskIdentity;
     if (!requestedFor) return;
     const request = ++copyRequest.current;
     try {
@@ -262,11 +286,30 @@ export function TaskDrawer({
       open
       onClose={onClose}
       side="right"
-      size="lg"
+      size="reader"
+      className={READER_WIDTH_CLASSES[readerWidth]}
+      bodyClassName="task-reader-body flex-1 overflow-y-auto px-4 py-3"
       title={detail?.title ? `${task.id} - ${detail.title}` : task.id}
+      headerActions={
+        <div className="task-reader-width">
+          <Label htmlFor="reader-width">Reader width</Label>
+          <Select
+            id="reader-width"
+            value={readerWidth}
+            onChange={(event) => {
+              const width = READER_WIDTHS.find((value) => value === event.target.value);
+              if (width) setReaderWidth(width);
+            }}
+          >
+            {READER_WIDTHS.map((width) => (
+              <option key={width} value={width}>{width === "100" ? "Full" : `${width}%`}</option>
+            ))}
+          </Select>
+        </div>
+      }
     >
       <div className="space-y-5">
-        <div ref={drawerFocusTarget} tabIndex={-1} data-testid="task-drawer-focus" className="focus-ring rounded-lg">
+        <div ref={drawerFocusTarget} tabIndex={-1} data-testid="task-drawer-focus" className="task-reader-summary focus-ring rounded-lg">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <StatusTag tone={statusTone(task.statusBase, board.workflow)}>
               {task.statusBase ?? "no status"}
@@ -283,9 +326,27 @@ export function TaskDrawer({
               <span className="tabular text-xs text-ui-text-subtle">set {stampDate}</span>
             ) : null}
           </div>
+          <p className="mt-2 text-sm text-ui-text">{outcome || "No outcome recorded."}</p>
         </div>
 
-        {readinessDetail.length > 0 ? (
+        <TaskReaderContent active={activeTab} onChange={setActiveTab} identity={taskIdentity!}
+          packetMetadata={task.packetMetadata}
+          fields={detail?.fields ?? []} renderField={(field) => <Field field={field} onSelectTask={onSelectTask} />}>
+        {activeTab === "Overview" ? <section className="text-sm">
+          <h3 className="text-xs font-medium text-ui-text-muted">Next action</h3>
+          <p>{task.readiness === "startable" ? "Dependencies are satisfied. Review the implementation brief."
+            : task.readiness === "waiting" ? "Resolve the open prerequisites shown in Dependencies."
+              : task.readiness === "needs-gate-check" ? "Review the dependency checks before starting."
+                : "No dependency-readiness classification is recorded."}</p>
+          <div className="kv-quiet mt-2">
+            <KV k="Epic" v={task.epic} />
+            <KV k={story?.kind === "enabler" ? "Enabler" : "Story"}
+              v={story ? `${story.id} - ${story.title}` : stories.length > 1 ? "Ambiguous story membership" : "Not recorded"} />
+            {task.section ? <KV k="Section" v={task.section} /> : null}
+            <KV k="Owners" v={task.owners.length ? task.owners.join(", ") : "-"} />
+          </div>
+        </section> : null}
+        {activeTab === "Dependencies" && readinessDetail.length > 0 ? (
           <section className="rounded-xl border border-ui-border bg-ui-bg-muted p-3">
             <h3 className="text-xs font-medium text-ui-text">
               {task.readiness === "startable" ? "Why it is ready" : "Why it is not ready"}
@@ -296,18 +357,7 @@ export function TaskDrawer({
           </section>
         ) : null}
 
-        {/* The scope, when the block has one, is the description the outcome
-         * column was never long enough to be. */}
-        {lead ? (
-          <p className="text-sm leading-relaxed text-ui-text">
-            <Prose text={lead.items.join(" ")} onSelectTask={onSelectTask} />
-          </p>
-        ) : null}
-
-        <p className={lead ? "text-xs text-ui-text-muted" : "text-sm text-ui-text"}>
-          {outcome || "No outcome recorded."}
-        </p>
-
+        {activeTab === "Evidence" ? <>
         <section className="space-y-2 rounded-xl border border-ui-border bg-ui-bg-muted p-3">
           <h3 className="text-xs font-medium text-ui-text">Share this task</h3>
           <p className="text-xs text-ui-text-muted">
@@ -335,37 +385,23 @@ export function TaskDrawer({
             </label>
           ) : null}
         </section>
+        </> : null}
 
-        {otherFields.map((field) => (
-          <Field key={field.label} field={field} onSelectTask={onSelectTask} />
-        ))}
-
-        {detail?.prose.length ? (
+        {activeTab === "Implementation" && detail?.prose.length ? (
           <section className="space-y-2 text-sm leading-relaxed text-ui-text">
-            {detail.prose.map((paragraph, index) =>
-              paragraph.startsWith("```") ? (
-                <pre key={index} className="mono overflow-x-auto rounded-lg bg-ui-bg-muted p-2 text-xs">
-                  {paragraph.replace(/^```.*\n?|\n?```$/g, "")}
-                </pre>
-              ) : (
-                <p key={index}>
-                  <Prose text={paragraph} onSelectTask={onSelectTask} />
-                </p>
-              ),
-            )}
+            {detail.prose.map((paragraph, index) => (
+              <div key={index}><Prose text={paragraph} onSelectTask={onSelectTask} /></div>
+            ))}
           </section>
         ) : null}
 
-        {detail === null ? (
+        {detail === null && activeTab === "Overview" ? (
           <p className="text-xs text-ui-text-subtle">
-            No detail block in the ledger. Adding a note creates one.
+            {localDetails.length > 1 ? "Ambiguous same-file detail blocks; content ownership needs review." : "No same-file detail block is recorded."}
           </p>
         ) : null}
 
-        <div className="kv-quiet text-sm">
-          <KV k="Epic" v={task.epic} />
-          {task.section ? <KV k="Section" v={task.section} /> : null}
-          <KV k="Owners" v={task.owners.length ? task.owners.join(", ") : "-"} />
+        {activeTab === "Evidence" ? <div className="kv-quiet text-sm">
           <KV
             k="Source"
             v={
@@ -384,9 +420,9 @@ export function TaskDrawer({
               }
             />
           ) : null}
-        </div>
+        </div> : null}
 
-        {links.length > 0 ? (
+        {activeTab === "Evidence" && links.length > 0 ? (
           <section>
             <h3 className="mb-1.5 text-xs font-medium text-ui-text-muted">Evidence</h3>
             <ul className="flex flex-wrap gap-1.5">
@@ -406,7 +442,7 @@ export function TaskDrawer({
           </section>
         ) : null}
 
-        {task.dependencies.length > 0 || task.dependencyResidue.length > 0 ? (
+        {activeTab === "Dependencies" && (task.dependencies.length > 0 || task.dependencyResidue.length > 0) ? (
           <section className="space-y-2">
             <h3 className="mb-1.5 text-xs font-medium text-ui-text-muted">
               Needs before this
@@ -476,7 +512,7 @@ export function TaskDrawer({
           </section>
         ) : null}
 
-        <section className="space-y-2 rounded-xl border border-ui-border bg-ui-bg-muted p-3">
+        {activeTab === "Dependencies" ? <section className="space-y-2 rounded-xl border border-ui-border bg-ui-bg-muted p-3">
           <div>
             <h3 className="text-xs font-medium text-ui-text">Unblocks next</h3>
             <p className="mt-1 text-xs text-ui-text-muted">
@@ -525,9 +561,9 @@ export function TaskDrawer({
           <Button size="sm" variant="ghost" className="min-h-11" onClick={() => onOpenGraph(task.id)}>
             Open full dependency graph
           </Button>
-        </section>
+        </section> : null}
 
-        {failure ? (
+        {activeTab === "Overview" && failure ? (
           <Notice tone="blocked" title={failure.message} onDismiss={() => setFailure(null)}>
             {failure.details ? (
               <pre className="mono max-h-40 overflow-auto whitespace-pre-wrap text-xs">
@@ -539,7 +575,7 @@ export function TaskDrawer({
           </Notice>
         ) : null}
 
-        {mode.kind !== "viewer" && task.statusCell ? (
+        {activeTab === "Overview" && mode.kind !== "viewer" && task.statusCell ? (
           <section className="space-y-2 rounded-xl border border-ui-border p-3">
             <h3 className="text-xs font-medium text-ui-text-muted">
               Status
@@ -583,7 +619,7 @@ export function TaskDrawer({
           </section>
         ) : null}
 
-        {mode.kind !== "viewer" && task.priorityCell ? (
+        {activeTab === "Overview" && mode.kind !== "viewer" && task.priorityCell ? (
           <section className="space-y-2 rounded-xl border border-ui-border p-3">
             <h3 className="text-xs font-medium text-ui-text-muted">
               Priority
@@ -619,13 +655,15 @@ export function TaskDrawer({
           detail={detail}
           workflow={board.workflow}
           onAddNote={
-            mode.kind === "local"
+            mode.kind === "local" && task.writable && ownsNotes
               ? (text, title) => mode.onAddNote(task, text, title)
               : undefined
           }
+          render={(activity) => activeTab === "Evidence" ? activity : null}
         />
 
-        <details>
+        {activeTab === "Evidence" && !ownsNotes ? <p className="text-xs text-ui-danger">Task/detail ownership is ambiguous; notes cannot be added.</p> : null}
+        {activeTab === "Evidence" ? <details>
           <summary className="cursor-pointer text-xs font-medium text-ui-text-muted">
             Other columns
           </summary>
@@ -636,7 +674,8 @@ export function TaskDrawer({
                 <KV key={header} k={header} v={value || "-"} />
               ))}
           </div>
-        </details>
+        </details> : null}
+        </TaskReaderContent>
       </div>
     </Drawer>
   );
