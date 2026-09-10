@@ -287,6 +287,7 @@ html.dark {
 
   .view-intro {
     @apply flex flex-wrap items-end justify-between gap-2 border-b border-ui-border/80 pb-3;
+    overflow-wrap: anywhere;
   }
 
   .view-description {
@@ -299,6 +300,81 @@ html.dark {
 
   .workspace-toolbar {
     @apply flex flex-wrap items-center gap-2 border-b border-ui-border/80 pb-3;
+  }
+
+  .task-reader {
+    width: 60vw;
+    min-width: 50vw;
+    overflow-wrap: anywhere;
+  }
+
+  .task-reader-50 { width: 50vw; }
+  .task-reader-75 { width: 75vw; }
+  .task-reader-100 { width: 100vw; }
+
+  .task-reader .drawer-header h2 {
+    min-width: 0;
+    flex: 1;
+    max-height: 25dvh;
+    overflow-y: auto;
+  }
+
+  .task-reader .drawer-header > button {
+    flex-shrink: 0;
+  }
+
+  .task-reader-width {
+    @apply flex shrink-0 items-center gap-2;
+  }
+
+  .task-reader-width label,
+  .task-reader-width select {
+    @apply text-xs;
+  }
+
+  .task-reader-width > div {
+    width: 5rem;
+  }
+
+  .task-reader-body {
+    min-width: 0;
+    min-height: 0;
+    overscroll-behavior: contain;
+  }
+
+  .task-reader pre {
+    max-width: 100%;
+  }
+
+  .task-implementation-summary { @apply min-w-0 space-y-3; }
+  .task-file-plan { @apply min-w-0 space-y-2 rounded-lg border border-ui-border bg-ui-bg-muted p-3; }
+  .task-plan-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: 0.75rem;
+  }
+  .task-plan-facts > div { min-width: 0; }
+  .task-plan-facts dt { @apply text-xs font-medium text-ui-text-muted; }
+  .task-plan-facts dd {
+    @apply text-sm;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .task-reader-summary {
+    @apply sticky top-0 z-10 bg-ui-bg-raised py-2;
+  }
+
+  .task-reader-tabs {
+    @apply flex flex-wrap gap-1 border-b border-ui-border;
+  }
+
+  .task-reader-tabs > button {
+    @apply min-h-11 min-w-0 rounded-t-lg px-2 text-xs text-ui-text-muted;
+  }
+
+  .task-reader-tabs > button[aria-selected="true"] {
+    @apply border-b-2 border-ui-accent bg-ui-bg-muted font-medium text-ui-text;
   }
 
   .toolbar select,
@@ -591,6 +667,33 @@ html.dark {
   .story-lane {
     @apply space-y-2.5;
   }
+
+  .roadmap-hierarchy { min-width: 0; overflow-wrap: anywhere; }
+  .roadmap-disclosure { @apply min-w-0 rounded-lg border border-ui-border; }
+  .roadmap-disclosure > summary {
+    @apply flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-2 rounded-lg px-3 py-2;
+  }
+  .roadmap-disclosure > summary::-webkit-details-marker { display: none; }
+  .roadmap-disclosure > summary::before {
+    content: "+";
+    @apply shrink-0 font-mono text-sm text-ui-text-muted;
+  }
+  .roadmap-disclosure[open] > summary::before { content: "-"; }
+  .roadmap-project > summary { @apply bg-ui-bg-muted; }
+  .roadmap-epic > summary { @apply bg-ui-bg-raised; }
+  .roadmap-heading { @apply flex min-w-0 flex-1 flex-col gap-0.5 text-sm; }
+  .roadmap-count { @apply tabular text-xs text-ui-text-subtle; }
+  .roadmap-source { @apply mono block text-xs text-ui-text-subtle; }
+  .roadmap-body { @apply min-w-0 space-y-2 p-2; }
+  .roadmap-outcome > summary { @apply items-start bg-ui-bg-raised; }
+  .roadmap-outcome > summary > span { @apply min-w-0; }
+  .roadmap-outcome > summary > .story-card-top { @apply flex-1 flex-wrap; }
+  .roadmap-outcome > summary > .story-line,
+  .roadmap-outcome > summary > .story-bar,
+  .roadmap-outcome > summary > .story-foot,
+  .roadmap-outcome > summary > .roadmap-source { width: 100%; }
+  .roadmap-outcome > .roadmap-body { @apply border-t border-ui-border px-3; }
+  .roadmap-outcome > .roadmap-body > button { @apply inline-flex min-h-8 items-center; }
 
   .story-lane-head {
     @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-ui-border pb-1.5;
@@ -916,6 +1019,21 @@ html.dark {
 
   .story-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 800px) {
+  .task-reader {
+    width: 100vw;
+    min-width: 100vw;
+  }
+
+  .task-reader .drawer-header {
+    flex-wrap: wrap;
+  }
+
+  .task-reader .drawer-header h2 {
+    flex-basis: 100%;
   }
 }
 

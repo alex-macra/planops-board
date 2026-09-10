@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { gitStatus } from "../server/git.ts";
 import { loadBoard } from "../server/ledger/corpus.ts";
+import {
+  createQwenReadinessManifest,
+  serializeQwenReadinessManifest,
+} from "../server/ledger/qwen-readiness.ts";
 import { applyWrite } from "../server/ledger/write.ts";
 import { loadBoardRuntime, type BoardRuntime } from "../server/runtime.ts";
 import {
@@ -196,6 +200,32 @@ describe("corpus watcher", () => {
     );
 
     expect(changed.corpus).not.toBe(initial.corpus);
+  });
+
+  it("publishes a new state after the readiness manifest changes", async () => {
+    const root = await disposableDemo("work/watch-readiness");
+    roots.push(root);
+    const runtime = await loadBoardRuntime({ repo: root });
+    const board = await loadBoard(runtime);
+    const initial = await readCorpusState(runtime);
+    const watcher = await primedWatcher(root, runtime);
+    const manifest = serializeQwenReadinessManifest(createQwenReadinessManifest({
+      toolVersion: "fixture/1",
+      auditBaseCommit: "a".repeat(40),
+      planRevision: board.planRevision,
+      capturedAt: "2026-09-08T12:00:00.000Z",
+      candidateTaskIds: [],
+      entries: [],
+    }));
+
+    const changed = await waitForPublication(
+      watcher,
+      () => writeFile(path.join(root, ".projects-board", "qwen-readiness.json"), manifest),
+      (state) => state.corpus !== initial.corpus,
+    );
+
+    expect(changed).toEqual(await readCorpusState(runtime));
+    expect((await loadBoard(runtime)).revision).toBe(changed.corpus);
   });
 
   it("discovers a matching document added after startup and makes it editable", async () => {

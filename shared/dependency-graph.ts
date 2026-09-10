@@ -46,27 +46,60 @@ export function isImpactClosed(task: Task, workflow: Workflow): boolean {
 }
 
 function cycleMembers(edges: ReadonlyMap<string, readonly string[]>): ReadonlySet<string> {
+  const nodes = new Set<string>(edges.keys());
+  for (const targets of edges.values()) for (const target of targets) nodes.add(target);
+  const forward = new Map<string, readonly string[]>();
+  const reverse = new Map<string, string[]>();
+  for (const node of nodes) reverse.set(node, []);
+  for (const node of nodes) {
+    const targets = [...new Set(edges.get(node) ?? [])];
+    forward.set(node, targets);
+    for (const target of targets) reverse.get(target)!.push(node);
+  }
   const visited = new Set<string>();
-  const active = new Set<string>();
-  const stack: string[] = [];
-  const cyclic = new Set<string>();
-
-  const visit = (id: string): void => {
-    if (active.has(id)) {
-      const start = stack.indexOf(id);
-      for (const member of stack.slice(start)) cyclic.add(member);
-      return;
+  const order: string[] = [];
+  for (const start of nodes) {
+    if (visited.has(start)) continue;
+    visited.add(start);
+    const stack: { id: string; next: number }[] = [{ id: start, next: 0 }];
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1]!;
+      const targets = forward.get(frame.id) ?? [];
+      const target = targets[frame.next];
+      if (target !== undefined) {
+        frame.next += 1;
+        if (!visited.has(target)) {
+          visited.add(target);
+          stack.push({ id: target, next: 0 });
+        }
+      } else {
+        order.push(frame.id);
+        stack.pop();
+      }
     }
-    if (visited.has(id)) return;
-    visited.add(id);
-    active.add(id);
-    stack.push(id);
-    for (const next of edges.get(id) ?? []) visit(next);
-    stack.pop();
-    active.delete(id);
-  };
-
-  for (const id of edges.keys()) visit(id);
+  }
+  const cyclic = new Set<string>();
+  const assigned = new Set<string>();
+  for (let index = order.length - 1; index >= 0; index -= 1) {
+    const start = order[index]!;
+    if (assigned.has(start)) continue;
+    const members: string[] = [];
+    assigned.add(start);
+    const stack = [start];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      members.push(id);
+      for (const target of reverse.get(id) ?? []) {
+        if (!assigned.has(target)) {
+          assigned.add(target);
+          stack.push(target);
+        }
+      }
+    }
+    if (members.length > 1 || (forward.get(start) ?? []).includes(start)) {
+      for (const member of members) cyclic.add(member);
+    }
+  }
   return cyclic;
 }
 

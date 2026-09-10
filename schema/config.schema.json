@@ -7,7 +7,7 @@
   "required": ["version", "documents", "workflow", "git", "server"],
   "properties": {
     "version": {
-      "const": 1
+      "enum": [1, 2]
     },
     "documents": {
       "type": "object",
@@ -32,6 +32,23 @@
             "type": "string",
             "minLength": 1,
             "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\.\\.)(?!.*\\*{3})(?!.*[?{}()!+@])(?!.*\\[)(?!.*\\])(?!.*//)(?!.*\\\\).+$"
+          }
+        },
+        "writable": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\.\\.)(?!.*[?{}()!+@])(?!.*\\[)(?!.*\\])(?!.*//)(?!.*\\\\).+\\.[mM][dD]$",
+            "not": {
+              "anyOf": [
+                { "pattern": "^(?:\\s|\\./)" },
+                { "pattern": "/\\./" },
+                { "pattern": "[\\u0000-\\u001f\\u007f\\u2028\\u2029]" },
+                { "pattern": "\\s$" }
+              ]
+            }
           }
         }
       }
@@ -99,6 +116,25 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "version": { "const": 1 } } },
+      "then": {
+        "properties": {
+          "documents": { "type": "object", "properties": { "writable": false } }
+        }
+      },
+      "else": {
+        "properties": {
+          "documents": {
+            "type": "object",
+            "required": ["writable"],
+            "properties": { "writable": true }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "uniqueStrings": {
       "type": "array",

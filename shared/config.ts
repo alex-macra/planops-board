@@ -49,6 +49,11 @@ const documentGlobSchema = z
     }
   });
 
+const writableGlobSchema = z.string().min(4)
+  .refine((value) => value === value.trim() && !/[\u0000-\u001f\u007f\u2028\u2029]/u.test(value),
+    "writable globs must be canonical without surrounding whitespace or control characters")
+  .pipe(documentGlobSchema);
+
 const exclusionGlobSchema = z
   .string()
   .trim()
@@ -140,15 +145,13 @@ export const workflowConfigSchema = z
     }
   });
 
-export const boardConfigSchema = z
+const documentsSchema = z.object({
+  include: uniquePatterns(documentGlobSchema, 1),
+  exclude: uniquePatterns(exclusionGlobSchema).default([]),
+}).strict();
+
+const commonConfigSchema = z
   .object({
-    version: z.literal(1),
-    documents: z
-      .object({
-        include: uniquePatterns(documentGlobSchema, 1),
-        exclude: uniquePatterns(exclusionGlobSchema).default([]),
-      })
-      .strict(),
     projectsFile: repositoryPathSchema.optional(),
     workflow: workflowConfigSchema,
     git: z
@@ -171,6 +174,14 @@ export const boardConfigSchema = z
       .strict(),
   })
   .strict();
+
+export const boardConfigSchema = z.discriminatedUnion("version", [
+  commonConfigSchema.extend({ version: z.literal(1), documents: documentsSchema }),
+  commonConfigSchema.extend({
+    version: z.literal(2),
+    documents: documentsSchema.extend({ writable: uniquePatterns(writableGlobSchema) }),
+  }),
+]);
 
 export type BoardConfig = z.infer<typeof boardConfigSchema>;
 export type WorkflowConfig = z.infer<typeof workflowConfigSchema>;

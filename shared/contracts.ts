@@ -32,9 +32,52 @@ const dependencySchema = z.object({
 
 const readinessSchema = z.enum(["startable", "waiting", "needs-gate-check"]).nullable();
 
+const workKindSchema = z.enum(["implementation", "verification", "research-docs", "owner-action", "external-hardware"]);
+const executionReadinessSchema = z.enum(["unassessed", "ready", "blocked", "no-change", "stale"]);
+const boundedText = z.string().max(100_000);
+const boundedArray = <T extends z.ZodType>(element: T, limit: number) =>
+  z.custom<unknown[]>((value) => Array.isArray(value) && value.length <= limit,
+    `must be an array with at most ${limit} items`).pipe(z.array(element)).readonly();
+const locRangeSchema = z.object({
+  min: z.number().int().min(0).max(10_000_000),
+  max: z.number().int().min(0).max(10_000_000),
+}).refine((range) => range.max >= range.min).readonly();
+const estimatedLocSchema = z.object({
+  production: locRangeSchema, tests: locRangeSchema, total: locRangeSchema,
+}).refine((loc) => loc.total.min === loc.production.min + loc.tests.min &&
+  loc.total.max === loc.production.max + loc.tests.max).readonly();
+const fileSymbolPlanSchema = z.object({
+  repository: z.string().min(1).max(500), path: z.string().min(1).max(2_000),
+  state: z.enum(["existing", "new"]), symbols: boundedArray(z.string().min(1).max(10_000), 200).refine((symbols) => symbols.length > 0),
+  behavior: boundedText.min(1), writeBoundary: boundedText.min(1), proof: boundedText.min(1),
+}).readonly();
+const packetMetadataSchema = z.object({
+  workKind: workKindSchema.nullable(), estimatedChangedLoc: estimatedLocSchema.nullable(),
+  sizeException: boundedText.nullable(),
+  // Malformed split tokens are bounded by packet bytes, not the valid-manifest child limit.
+  splitTaskIds: boundedArray(boundedText, 8 * 1024 * 1024),
+  files: boundedArray(fileSymbolPlanSchema, 500), issues: boundedArray(boundedText, 2_000),
+}).refine((metadata) => metadata.sizeException !== "" || metadata.issues.length > 0).readonly();
+const qwenReadinessSummarySchema = z.object({
+  status: z.enum(["missing", "invalid", "loaded"]), schemaVersion: z.literal(1).nullable(),
+  auditBaseCommit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
+  capturedAt: z.string().max(100).nullable(), candidateCount: z.number().int().min(0).max(2_000),
+  manifestSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable(), error: z.string().max(500).nullable(),
+}).readonly();
+
 const taskSchema = z.object({
   id: z.string(),
   file: z.string(),
+  writable: z.boolean(),
+  storyId: z.string().nullable(),
+  qwen3CoderNextReady: z.boolean(),
+  packetMetadata: packetMetadataSchema,
+  executionReadiness: executionReadinessSchema,
+  workKind: workKindSchema.nullable(),
+  estimatedChangedLoc: estimatedLocSchema.nullable(),
+  sizeException: boundedText.min(1).nullable(),
+  readinessCheckedAt: z.string().max(100).nullable(),
+  executionBlockers: boundedArray(boundedText, 10_000),
   epic: z.string(),
   section: z.string().nullable(),
   title: z.string().nullable(),
@@ -107,6 +150,7 @@ const projectSummarySchema = z.object({
 
 const documentSchema = z.object({
   path: z.string(),
+  writable: z.boolean(),
   title: z.string(),
   sha256: z.string(),
   vocabulary: z.object({
@@ -136,7 +180,9 @@ const issueSchema = z.object({
 
 export const boardSchema = z.object({
   generatedAt: z.string(),
+  planRevision: z.string().regex(/^[0-9a-f]{64}$/),
   revision: z.string(),
+  qwenReadiness: qwenReadinessSummarySchema,
   workflow: workflowSchema,
   documents: z.array(documentSchema).readonly(),
   projects: z.array(projectSummarySchema).readonly(),
@@ -162,6 +208,9 @@ export type Readiness = z.infer<typeof readinessSchema>;
 export type Story = z.infer<typeof storySchema>;
 export type StoryKind = Story["kind"];
 export type Task = z.infer<typeof taskSchema>;
+export type ExecutionReadiness = z.infer<typeof executionReadinessSchema>;
+export type WorkKind = z.infer<typeof workKindSchema>;
+export type TaskPacketMetadata = z.infer<typeof packetMetadataSchema>;
 
 export const apiFailureSchema = z.object({
   error: z.string(),

@@ -21,10 +21,11 @@ interface Props {
   readonly detail: DetailBlock | null;
   readonly workflow: Workflow;
   readonly onAddNote?: ((text: string, title?: string) => Promise<void>) | undefined;
+  readonly render?: (activity: JSX.Element) => JSX.Element | null;
 }
 
 /** The timeline is fetched on demand so Git replay stays off the board payload. */
-export function TaskActivity({ task, detail, workflow, onAddNote }: Props): JSX.Element {
+export function TaskActivity({ task, detail, workflow, onAddNote, render }: Props): JSX.Element | null {
   const [history, setHistory] = useState<TaskHistory | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -69,7 +70,7 @@ export function TaskActivity({ task, detail, workflow, onAddNote }: Props): JSX.
     }
   }
 
-  return (
+  const activity = (
     <section className="space-y-3">
       <h3 className="text-xs font-medium text-ui-text-muted">Activity</h3>
 
@@ -177,4 +178,5 @@ export function TaskActivity({ task, detail, workflow, onAddNote }: Props): JSX.
       </div> : null}
     </section>
   );
+  return render ? render(activity) : activity;
 }

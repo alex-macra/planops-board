@@ -4,6 +4,8 @@ import {
   conventionalHeadingLevel,
   extractDetailBlocks,
   notesOf,
+  qwen3CoderNextPacketIsReady,
+  taskPacketFieldRange,
 } from "../server/ledger/detail.ts";
 
 function blocksOf(markdown: string) {
@@ -144,5 +146,116 @@ describe("task detail parsing", () => {
       "## ORB-012 - Three",
     ].join("\n");
     expect(conventionalHeadingLevel(blocksOf(markdown))).toBe(3);
+  });
+});
+
+describe("ordered Qwen packet structure", () => {
+  const fields = [
+    "- **Readiness:**\n  - Packet status: READY",
+    "- **Objective:** Record the orbit.",
+    "- **Why:** Observations need a timestamp.",
+    "- **Scope:** One observation function.",
+    "- **Starting point:** The existing orbit module.",
+    "- **Decisions already made:** Preserve UTC.",
+    "- **Decision authority:** Local names only.",
+    "- **Contract:** Return the observation time.",
+    "- **Change required:** Add the bounded timestamp.",
+    "- **Invariants:** Existing observation order stays stable.",
+    "- **Non-goals:** No new telescope controls.",
+    "- **Acceptance:** The timestamp is deterministic.",
+    "- **Verify:** Run the orbit fixture.",
+    "- **Escalate, do not assume, if:** The orbit module moved.",
+    "- **Handoff:** Report changed symbols and proof.",
+  ].join("\n");
+  const marker = "#### Qwen3-Coder-Next packet";
+  const packet = `### ORB-020 - Timestamp the observation\n\n${marker}\n\n${fields}`;
+
+  it("selects the exact ordered range between unrelated legacy fields", () => {
+    const markdown = packet.replace(marker, `- **Scope:** Original scope.\n\n${marker}`) +
+      "\n- **Evidence:** Earlier observation.\n";
+    const block = blocksOf(markdown)[0]!;
+    expect(taskPacketFieldRange(block.fields)).toEqual({ start: 1, end: 15 });
+    expect(qwen3CoderNextPacketIsReady(block)).toBe(true);
+    expect(block.fields[0]?.items).toEqual(["Original scope."]);
+    expect(block.fields.at(-1)?.items).toEqual(["Earlier observation."]);
+  });
+
+  it("recognizes the existing standalone-label packet form", () => {
+    const markdown = packet.replace(marker, "**Qwen3-Coder-Next packet**")
+      .replaceAll(/- \*\*([^*]+):\*\* ?([^\n]*)/g, "\n**$1**\n$2");
+    expect(qwen3CoderNextPacketIsReady(blocksOf(markdown)[0]!)).toBe(true);
+  });
+
+  it.each([
+    ["generic marker", packet.replace(marker, "#### Qwen task packet")],
+    ["missing marker", packet.replace(marker, "#### Implementation notes")],
+    ["duplicate explicit marker", packet.replace(marker, `${marker}\n\n${marker}`)],
+    ["mixed markers", packet.replace(marker, `${marker}\n\n#### Qwen task packet`)],
+    ["nonliteral status", packet.replace("Packet status: READY", "Packet status: READY.")],
+    ["duplicate status", packet.replace("Packet status: READY", "Packet status: READY\n  - Packet status: BLOCKED_BY_SPEC")],
+    ["mixed-case duplicate status", packet.replace("Packet status: READY", "Packet status: READY\n  - packet status: BLOCKED_BY_SPEC")],
+    ["lowercase sole status", packet.replace("Packet status: READY", "packet status: READY")],
+    ["misplaced status", packet.replace("Packet status: READY", "Awaiting evidence").replace("Record the orbit.", "Packet status: READY")],
+    ["missing field", packet.replace("- **Why:** Observations need a timestamp.\n", "")],
+    ["reordered fields", packet.replace("- **Objective:** Record the orbit.\n- **Why:** Observations need a timestamp.",
+      "- **Why:** Observations need a timestamp.\n- **Objective:** Record the orbit.")],
+    ["duplicate field", packet.replace("- **Objective:** Record the orbit.", "- **Objective:** Record the orbit.\n- **Objective:** Another objective.")],
+    ["duplicate field ranges", `${packet}\n${fields}`],
+    ["ready stub", `### ORB-020 - Stub\n\n${marker}\n\n- **Readiness:** Packet status: READY\n- **Handoff:** Report.`],
+  ])("rejects %s", (_label, markdown) => {
+    expect(qwen3CoderNextPacketIsReady(blocksOf(markdown!)[0]!)).toBe(false);
+  });
+
+  it("keeps fenced packet examples inert and present", () => {
+    const fenced = `\n\n\`\`\`markdown\n${marker}\n${fields}\n\`\`\``;
+    const block = blocksOf(`### ORB-020 - Example${fenced}`)[0]!;
+    expect(taskPacketFieldRange(block.fields)).toBeNull();
+    expect(qwen3CoderNextPacketIsReady(block)).toBe(false);
+    expect(block.prose).toEqual([fenced.trim()]);
+    const real = blocksOf(packet + fenced)[0]!;
+    expect(qwen3CoderNextPacketIsReady(real)).toBe(true);
+    expect(real.prose.at(-1)).toBe(fenced.trim());
+  });
+
+  it("keeps deeper task packets out of their parent's ordinary prose", () => {
+    const markdown = `### ORB-019 - Parent\n\n#### Evidence\n\nParent evidence.\n\n${packet.replace("### ORB-020", "#### ORB-020").replace(marker, `#${marker}`)}`;
+    const [parent, child] = blocksOf(markdown);
+    expect(parent?.prose).toEqual(["#### Evidence", "Parent evidence."]);
+    expect(parent?.fields).toEqual([]);
+    expect(parent?.endLine).toBe(5);
+    expect(qwen3CoderNextPacketIsReady(parent!)).toBe(false);
+    expect(qwen3CoderNextPacketIsReady(child!)).toBe(true);
+  });
+
+  it.each(["\n", "\n\n", "\n```markdown\n"])("ignores commented packets after %j", (separator) => {
+    const markdown = `### ORB-019 - Example\n\n<!--${separator}${packet}\n\n-->`;
+    const blocks = blocksOf(markdown);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.fields).toEqual([]);
+    expect(qwen3CoderNextPacketIsReady(blocks[0]!)).toBe(false);
+    expect(blocks[0]?.endLine).toBe(markdown.split("\n").length);
+  });
+
+  it("ignores commented examples beside a real packet without hiding code literals", () => {
+    const suffix = `\n\n<!--\n\n${marker}\n\n${fields}\n-->`;
+    const real = blocksOf(packet + suffix)[0]!;
+    expect(qwen3CoderNextPacketIsReady(real)).toBe(true);
+    expect(real.fields).toEqual(blocksOf(packet)[0]?.fields);
+    for (const literal of ["`<!-- literal -->`", "``<!-- ` literal -->``", "```text\n<!-- literal -->\n```", "`first\ntext <!-- literal -->\nlast`"]) {
+      const block = blocksOf(`${packet}\n\n${literal}`)[0]!;
+      expect(block.prose.at(-1)).toBe(literal.startsWith("```text") ? literal : literal.replaceAll("\n", " "));
+      expect(qwen3CoderNextPacketIsReady(block)).toBe(true);
+    }
+  });
+
+  it("returns the same result without changing frozen input", () => {
+    const block = blocksOf(packet)[0]!;
+    const before = JSON.stringify(block);
+    for (const field of block.fields) { Object.freeze(field.items); Object.freeze(field); }
+    Object.freeze(block.fields); Object.freeze(block.prose); Object.freeze(block);
+    expect(qwen3CoderNextPacketIsReady(block)).toBe(true);
+    expect(qwen3CoderNextPacketIsReady(block)).toBe(true);
+    expect(taskPacketFieldRange(block.fields)).toEqual({ start: 0, end: 14 });
+    expect(JSON.stringify(block)).toBe(before);
   });
 });

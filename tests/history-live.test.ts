@@ -1,19 +1,24 @@
 import { EventEmitter } from "node:events";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HistoryError, taskHistory } from "../server/history.ts";
 import { handleEvents } from "../server/live.ts";
 import { loadBoardRuntime } from "../server/runtime.ts";
 import { readCorpusState } from "../server/watch.ts";
+import * as watcherState from "../server/watch.ts";
 import { disposableDemo, git, removeDisposableDemo } from "./fixture.ts";
 
 const roots: string[] = [];
+const closes: (() => void)[] = [];
 
 afterEach(async () => {
+  closes.splice(0).forEach((close) => close());
+  vi.restoreAllMocks(); vi.useRealTimers();
   await Promise.all(roots.splice(0).map(removeDisposableDemo));
 });
 
@@ -77,6 +82,46 @@ describe("Git-derived history", () => {
 });
 
 describe("live corpus state", () => {
+  it.each(["request", "response", "initializing", "updates"])("owns one ordered state stream with %s close", async (mode) => {
+    const fixture = await runtime(), request = new IncomingMessage(new Socket()), response = new ServerResponse(request);
+    closes.push(() => { request.emit("close"); request.socket.destroy(); });
+    const frames: string[] = [], release = vi.fn();
+    let resolveOld!: (state: watcherState.CorpusState) => void;
+    const independentRead = vi.spyOn(watcherState, "readCorpusState")
+      .mockReturnValue(new Promise((resolve) => { resolveOld = resolve; }));
+    let send: (state: watcherState.CorpusState) => void = () => undefined;
+    vi.spyOn(watcherState, "subscribeToCorpus").mockImplementation((_runtime, listener) => {
+      send = listener;
+      if (mode === "request" || mode === "response") listener({ corpus: "current", git: "git" });
+      return release;
+    });
+    vi.spyOn(response, "writeHead").mockReturnValue(response);
+    vi.spyOn(response, "write").mockImplementation((frame) => {
+      frames.push(String(frame));
+      if (String(frame).startsWith("event: state") && (mode === "request" || mode === "response")) {
+        (mode === "request" ? request : response).emit("close");
+      }
+      return true;
+    });
+    const end = vi.spyOn(response, "end"); vi.useFakeTimers();
+    handleEvents(fixture.runtime, request, response);
+    if (mode === "request" || mode === "response") {
+      expect(release).toHaveBeenCalledTimes(1); expect(response.writableEnded).toBe(true); expect(vi.getTimerCount()).toBe(0);
+    }
+    if (mode === "updates") {
+      send({ corpus: "first", git: "git" }); send({ corpus: "second", git: "git" });
+      resolveOld({ corpus: "old", git: "git" }); await vi.advanceTimersByTimeAsync(0);
+      expect(frames.at(-1)).toContain('"corpus":"second"');
+      await vi.advanceTimersByTimeAsync(25_000); expect(frames.at(-1)).toBe(": ping\n\n");
+    }
+    request.emit("close"); response.emit("close");
+    const before = [...frames]; resolveOld({ corpus: "old", git: "git" });
+    send({ corpus: "after-close", git: "git" }); await vi.advanceTimersByTimeAsync(25_000);
+    expect(frames).toEqual(before); expect(frames[0]).toBe("retry: 2000\n\n");
+    expect(frames.filter((frame) => frame.startsWith("event: state"))).toHaveLength(mode === "updates" ? 2 : mode === "initializing" ? 0 : 1);
+    expect(independentRead).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledTimes(1); expect(response.writableEnded).toBe(true); expect(vi.getTimerCount()).toBe(0);
+  });
   it("changes for a planning edit but not unrelated dirty work", async () => {
     const fixture = await runtime();
     const initial = await readCorpusState(fixture.runtime);
@@ -91,6 +136,7 @@ describe("live corpus state", () => {
   it("sends the current state immediately on the event stream", async () => {
     const fixture = await runtime();
     const request = new EventEmitter();
+    closes.push(() => request.emit("close"));
     const response = new EventEmitter() as EventEmitter & {
       writableEnded: boolean;
       destroyed: boolean;
@@ -125,6 +171,11 @@ describe("live corpus state", () => {
     await stateSent;
     expect(frames[0]).toBe("retry: 2000\n\n");
     expect(frames.some((frame) => frame.includes("event: state\ndata:"))).toBe(true);
+    const lateRequest = new IncomingMessage(new Socket()), lateResponse = new ServerResponse(lateRequest), replay: string[] = [];
+    closes.push(() => { lateRequest.emit("close"); lateRequest.socket.destroy(); });
+    vi.spyOn(lateResponse, "write").mockImplementation((frame) => { replay.push(String(frame)); return true; });
+    handleEvents(fixture.runtime, lateRequest, lateResponse);
+    expect(replay).toEqual(frames);
     request.emit("close");
   });
 });

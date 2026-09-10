@@ -34,6 +34,17 @@ export function handleEvents(
   });
 
   let stopped = false;
+  let unsubscribe: (() => void) | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  const stop = (): void => {
+    if (stopped) return;
+    stopped = true;
+    if (heartbeat) clearInterval(heartbeat);
+    unsubscribe?.();
+    response.end();
+  };
+  request.on("close", stop);
+  response.on("close", stop);
   const write = (frame: string): void => {
     if (stopped || response.writableEnded || response.destroyed) return;
     response.write(frame);
@@ -47,21 +58,13 @@ export function handleEvents(
     write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
   };
 
-  const unsubscribe = subscribeToCorpus(runtime, send);
+  if (stopped) return;
+  const release = subscribeToCorpus(runtime, send);
+  if (stopped) { release(); return; }
+  unsubscribe = release;
 
   // Comment frames rather than events, so a client has no message type to learn
   // and no reason to refetch on a heartbeat.
-  const heartbeat = setInterval(() => write(": ping\n\n"), HEARTBEAT_MS);
+  heartbeat = setInterval(() => write(": ping\n\n"), HEARTBEAT_MS);
   heartbeat.unref?.();
-
-  const stop = (): void => {
-    if (stopped) return;
-    stopped = true;
-    clearInterval(heartbeat);
-    unsubscribe();
-    response.end();
-  };
-
-  request.on("close", stop);
-  response.on("close", stop);
 }

@@ -273,6 +273,8 @@ describe("agent query contract", () => {
           ["dangling-dependency", "plans/äpple.md", 5, "LOC-001"],
           ["duplicate-task-id", "plans/zebra.md", 5, "LOC-001"],
           ["duplicate-task-id", "plans/äpple.md", 5, "LOC-001"],
+          ["story-member-unassigned", "plans/zebra.md", 5, "LOC-001"],
+          ["story-member-unassigned", "plans/äpple.md", 5, "LOC-001"],
           ["unknown-status", "plans/zebra.md", 5, "LOC-001"],
           ["unknown-status", "plans/äpple.md", 5, "LOC-001"],
         ]);
