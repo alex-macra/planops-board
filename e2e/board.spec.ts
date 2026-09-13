@@ -17,7 +17,7 @@ test("edits, undoes, annotates, branches, and commits a fictional task", async (
 
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "PlanOps Board" })).toBeVisible();
-  await expect(page.getByText("9 tasks", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "All projects 9 tasks" })).toBeVisible();
 
   await page.getByRole("radio", { name: "Backlog" }).click();
   await page.getByPlaceholder(/Search ID/).fill("MGA-002");
