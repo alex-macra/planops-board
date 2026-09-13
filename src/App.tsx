@@ -1,6 +1,7 @@
 import {
   Button,
   DarkModeToggle,
+  DropdownMenu,
   FilterBar,
   SegmentedControl,
   Select,
@@ -9,7 +10,7 @@ import {
   useDarkMode,
   useToast,
 } from "./ui/index.tsx";
-import { Check, RefreshCw, Search, Undo2 } from "lucide-react";
+import { Check, MoreHorizontal, RefreshCw, Search, Undo2 } from "lucide-react";
 import type { JSX } from "react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -235,6 +236,10 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
     setQuery({ view: "graph", group: "none", filters: emptyFilters, task, story: null }, "push");
   }, [setQuery]);
 
+  const showInBacklog = useCallback((task: string) => {
+    setQuery({ view: "backlog", group: "none", filters: { ...emptyFilters, project: filters.project, text: task }, task: null, story: null }, "push");
+  }, [filters.project, setQuery]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
@@ -306,7 +311,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
   );
 
   return (
-    <div className="app-shell mx-auto flex min-h-screen max-w-[104rem] flex-col gap-4 px-4 pb-6 sm:px-6">
+    <div className="app-shell ux-portfolio mx-auto flex min-h-screen max-w-[104rem] flex-col gap-4 px-4 pb-6 sm:px-6">
       {/* The board scrolls both ways underneath; the controls that steer it stay. */}
       <header className="app-header toolbar sticky top-0 z-30 -mx-4 border-b border-ui-border bg-ui-bg/90 px-4 backdrop-blur sm:-mx-6 sm:px-6">
         <div className="app-header-main">
@@ -348,20 +353,6 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           </div>
         </div>
         <div className="app-navigation">
-          <label className="scope-switcher">
-            <span>Scope</span>
-            <Select
-              aria-label="Project scope"
-              value={filters.project}
-              onChange={(event) => setQuery({ filters: { project: event.target.value } })}
-            >
-              {options.projects.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-          </label>
           <div className="view-tabs">
             <SegmentedControl
               options={VIEWS}
@@ -389,6 +380,38 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           </div>
         </details>
       </header>
+
+      <aside className="portfolio-rail" aria-label="Project explorer">
+        <div className="portfolio-rail-heading">
+          <span className="view-eyebrow">Portfolio lens</span>
+          <strong>Projects</strong>
+          <p>Choose a project, then follow its work through every view.</p>
+        </div>
+        <button type="button" className="portfolio-project focus-ring"
+          aria-current={filters.project === "" ? "true" : undefined}
+          onClick={() => setQuery({ filters: { project: "" } })}>
+          <span className="portfolio-project-name">All projects</span>
+          <span className="portfolio-project-count">{board?.tasks.length ?? 0} tasks</span>
+        </button>
+        {board?.projects.map((project) => {
+          const projectTasks = board.tasks.filter((task) => task.project === project.id || task.projects.includes(project.id));
+          const startable = projectTasks.filter((task) => task.readiness === "startable").length;
+          return <div className="portfolio-project-row" key={project.id}>
+            <button type="button" className="portfolio-project focus-ring"
+              aria-current={filters.project === project.id ? "true" : undefined}
+              onClick={() => setQuery({ filters: { project: project.id } })}>
+              <span className="portfolio-project-name">{project.label}</span>
+              <span className="portfolio-project-count">{projectTasks.length} tasks · {startable} ready</span>
+            </button>
+            <DropdownMenu align="end" trigger={<span className="portfolio-project-more" aria-label={`Open ${project.label} in a view`}><MoreHorizontal size={16} /></span>}
+              groups={[{ label: project.label, items: [
+                { id: "roadmap", label: "Open roadmap", onClick: () => setQuery({ view: "stories", filters: { ...emptyFilters, project: project.id } }) },
+                { id: "board", label: "Open board", onClick: () => setQuery({ view: "kanban", filters: { ...emptyFilters, project: project.id } }) },
+                { id: "deps", label: "Open dependencies", onClick: () => setQuery({ view: "graph", filters: { ...emptyFilters, project: project.id } }) },
+              ] }]} />
+          </div>;
+        })}
+      </aside>
 
       {error ? (
         <Notice tone="blocked" title="Could not load the ledgers">
@@ -440,8 +463,14 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
 
       <div className="view-intro">
         <div>
-          <p className="view-eyebrow">{scopeLabel ?? "All projects"}</p>
+          <p className="view-eyebrow">{VIEWS.find((item) => item.value === view)?.label}</p>
+          <h2 className="ux-view-title">{scopeLabel ?? "All projects"}</h2>
           <p className="view-description">{VIEW_DESCRIPTION[view]}</p>
+        </div>
+        <div className="portfolio-view-actions" aria-label="Project views">
+          <button type="button" className="focus-ring" onClick={() => setQuery({ view: "stories" })}>Roadmap</button>
+          <button type="button" className="focus-ring" onClick={() => setQuery({ view: "kanban" })}>Board</button>
+          <button type="button" className="focus-ring" onClick={() => setQuery({ view: "backlog" })}>Tasks</button>
         </div>
         {COMPOSED.has(view) ? (
           <span className="tabular view-count">
@@ -587,6 +616,8 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
                 selectedId={query.task}
                 onSelectTask={openTask}
                 onMoveStatus={moveStatus}
+                onOpenGraph={openGraph}
+                onShowInBacklog={showInBacklog}
                 onOverlayChange={setKanbanConfirmOpen}
                 editable={session.capabilities.localWrites}
               />

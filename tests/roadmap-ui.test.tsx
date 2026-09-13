@@ -184,7 +184,8 @@ describe("Roadmap in the real App", () => {
     const params = new URLSearchParams(window.location.hash.slice(1)); expect(params.get("view")).toBe("backlog");
     for (const [key, value] of new URLSearchParams(filters)) expect(params.get(key)).toBe(value);
     expect(screen.getByRole("radio", { name: "Backlog" })).toBeChecked();
-    expect(screen.getByPlaceholderText(/Search ID/)).toHaveValue("ORB"); expect(screen.getByRole("combobox", { name: "Project scope" })).toHaveValue("orbit");
+    expect(screen.getByPlaceholderText(/Search ID/)).toHaveValue("ORB");
+    expect(screen.getByRole("button", { name: /Observatory.*tasks/ })).toHaveAttribute("aria-current", "true");
     for (const id of ["ORB-001", "ORB-002", "ORB-999"]) expect(screen.getByRole("button", { name: id })).toBeVisible();
     expect(screen.queryByRole("button", { name: "SUN-001" })).not.toBeInTheDocument();
   });
