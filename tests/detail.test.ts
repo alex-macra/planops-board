@@ -186,6 +186,22 @@ describe("ordered Qwen packet structure", () => {
     expect(qwen3CoderNextPacketIsReady(blocksOf(markdown)[0]!)).toBe(true);
   });
 
+  it("recognizes the Qwen3.8-Flash-Next packet heading", () => {
+    const markdown = packet.replace(marker, "#### Qwen3.8-Flash-Next packet");
+    expect(qwen3CoderNextPacketIsReady(blocksOf(markdown)[0]!)).toBe(true);
+  });
+
+  it.each([
+    "#### Qwen3.8-Flash-Next packet\n\n#### Qwen3-Coder-Next packet",
+    "#### Qwen3.8-Flash-Next packet\n\n#### Qwen3.8-Flash-Next packet",
+    "#### Qwen3.8-Flash-Next readiness packet",
+    "#### Qwen3.8-Flash-Next task packet",
+    "#### Qwen3.8-Flash-Next packet - extra",
+    "#### Qwen3.8-Flash packet",
+  ])("rejects ambiguous or incomplete Qwen3.8 markers: %s", (replacement) => {
+    expect(qwen3CoderNextPacketIsReady(blocksOf(packet.replace(marker, replacement))[0]!)).toBe(false);
+  });
+
   it.each([
     ["generic marker", packet.replace(marker, "#### Qwen task packet")],
     ["missing marker", packet.replace(marker, "#### Implementation notes")],
