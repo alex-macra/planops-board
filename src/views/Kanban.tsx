@@ -1,11 +1,12 @@
-import { ConfirmDialog, DropdownMenu, EmptyState } from "../ui/index.tsx";
-import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { ConfirmDialog, EmptyState } from "../ui/index.tsx";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Board, Task, Workflow } from "../api.ts";
 import { detailOf, vocabularyOf } from "../api.ts";
 import { StatusTag, Tag } from "../components/Tag.tsx";
+import { TaskActions } from "../components/TaskActions.tsx";
 import { priorityTone, statusRailTone, statusTone } from "../components/tone.ts";
 import { cardData, type CardDragData } from "../dnd/data.ts";
 import {
@@ -25,6 +26,8 @@ interface Props {
   readonly selectedId: string | null;
   readonly onSelectTask: (taskId: string | null) => void;
   readonly onMoveStatus: (task: Task, status: string) => void;
+  readonly onOpenGraph?: (taskId: string) => void;
+  readonly onShowInBacklog?: (taskId: string) => void;
   readonly onOverlayChange?: (open: boolean) => void;
   readonly editable: boolean;
 }
@@ -77,6 +80,8 @@ function TaskCard({
   testId,
   onSelect,
   onMove,
+  onOpenGraph,
+  onShowInBacklog,
   editable,
 }: {
   task: Task;
@@ -89,6 +94,8 @@ function TaskCard({
   testId: string;
   onSelect: () => void;
   onMove: (base: string) => void;
+  onOpenGraph?: () => void;
+  onShowInBacklog?: () => void;
   editable: boolean;
 }): JSX.Element {
   const { ref, dragging } = useDraggableElement<HTMLButtonElement>({
@@ -141,7 +148,7 @@ function TaskCard({
           .filter(Boolean)
           .join(" ")}
       >
-        <p className="line-clamp-2 pr-5 text-[13px] leading-snug text-ui-text">
+        <p className="line-clamp-2 pr-9 text-[13px] leading-snug text-ui-text">
           {task.title ?? task.outcome}
         </p>
         <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ui-text-subtle">
@@ -168,32 +175,23 @@ function TaskCard({
           {task.statusQualifier ? <span title={task.statusQualifier}>· qualified</span> : null}
         </span>
       </button>
-      {editable && task.statusCell ? (
-        <span className="board-card-menu opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-          <DropdownMenu
-            align="end"
-            trigger={
-              <span
-                className="focus-ring rounded p-0.5 text-ui-text-subtle hover:bg-ui-bg-muted"
-                aria-label={`Move ${task.id}`}
-              >
-                <MoreHorizontal size={14} />
-              </span>
-            }
-            groups={[
-              {
-                label: "Move to",
-                items: bases.map((base) => ({
-                  id: base,
-                  label: base,
-                  disabled: base === task.statusBase,
-                  onClick: () => onMove(base),
-                })),
-              },
-            ]}
-          />
-        </span>
-      ) : null}
+      <span className="board-card-menu">
+        <TaskActions
+          taskId={task.id}
+          onOpenDetails={onSelect}
+          onOpenGraph={onOpenGraph}
+          onShowInBacklog={onShowInBacklog}
+          extraGroups={editable && task.statusCell ? [{
+            label: "Move to",
+            items: bases.map((base) => ({
+              id: base,
+              label: base,
+              disabled: base === task.statusBase,
+              onClick: () => onMove(base),
+            })),
+          }] : []}
+        />
+      </span>
     </div>
   );
 }
@@ -212,6 +210,8 @@ function Column({
   onSelectTask,
   onDrop,
   onMove,
+  onOpenGraph,
+  onShowInBacklog,
   editable,
 }: {
   base: string;
@@ -227,6 +227,8 @@ function Column({
   onSelectTask: (taskId: string) => void;
   onDrop: (data: CardDragData) => void;
   onMove: (task: Task, base: string) => void;
+  onOpenGraph?: (taskId: string) => void;
+  onShowInBacklog?: (taskId: string) => void;
   editable: boolean;
 }): JSX.Element {
   const canDrop = useCallback(
@@ -291,6 +293,8 @@ function Column({
               testId={`card-${testIdScope}${task.id}`}
               onSelect={() => onSelectTask(task.id)}
               onMove={(next) => onMove(task, next)}
+              onOpenGraph={() => onOpenGraph?.(task.id)}
+              onShowInBacklog={() => onShowInBacklog?.(task.id)}
               editable={editable}
             />
           ))}
@@ -327,6 +331,8 @@ export function Kanban({
   selectedId,
   onSelectTask,
   onMoveStatus,
+  onOpenGraph,
+  onShowInBacklog,
   onOverlayChange,
   editable,
 }: Props): JSX.Element {
@@ -450,6 +456,8 @@ export function Kanban({
                       onToggle={() => toggleColumn(base)}
                       onSelectTask={onSelectTask}
                       onMove={requestMove}
+                      onOpenGraph={onOpenGraph}
+                      onShowInBacklog={onShowInBacklog}
                       editable={editable}
                       onDrop={(data) => {
                         const task = byId.get(data.taskId);

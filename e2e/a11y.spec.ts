@@ -6,9 +6,13 @@ import { boardSchema } from "../shared/contracts.ts";
 test("main views have no detectable WCAG 2.2 AA violations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "PlanOps Board" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "All projects 9 tasks" })).toBeVisible();
 
   for (const view of ["Now", "Roadmap", "Rollup", "Board", "Backlog", "Dependencies"]) {
     await page.getByRole("radio", { name: view, exact: true }).click();
+    if (view === "Dependencies") {
+      await expect(page.getByRole("group", { name: "Task dependency graph", exact: true })).toBeVisible();
+    }
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
     expect(results.violations, `${view}: ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
   }
