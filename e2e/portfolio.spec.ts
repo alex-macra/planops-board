@@ -82,3 +82,23 @@ test("mobile task menus stay in the viewport and return keyboard focus", async (
   await expect(trigger).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });
+
+test("project search opens a scoped view and recovers from an empty result on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto("/");
+  const search = page.getByRole("searchbox", { name: "Find project" });
+  await search.fill("signal");
+  await expect(page.getByRole("status")).toContainText("1 of 4 projects");
+  await page.getByRole("button", { name: "Open Signal Harbor in a view" }).click();
+  await page.getByRole("menuitem", { name: "Open board" }).click();
+  await expect(page).toHaveURL(/#view=kanban&project=signal-harbor$/);
+  await expect(page.getByRole("radio", { name: "Board", exact: true })).toBeChecked();
+  await expect(search).toHaveValue("signal");
+  await search.fill("nothing-matches");
+  await expect(page.getByText("No projects match “nothing-matches”.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Signal Harbor" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear project search" }).click();
+  await expect(search).toBeFocused();
+  await expect(page.getByRole("button", { name: /^Signal Harbor \d+ tasks/ })).toHaveAttribute("aria-current", "true");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+});

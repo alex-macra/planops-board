@@ -61,7 +61,7 @@ const GROUPS = [
 ] as const;
 
 const VIEW_DESCRIPTION: Record<ViewId, string> = {
-  now: "Prioritized queries over current tasks.",
+  now: "See work that is ready, active, or getting stale.",
   stories: "Roadmap grouped by project, epic, and story or enabler.",
   rollup: "Project coverage, activity, and data quality at a glance.",
   kanban: "Move tasks between configured statuses.",
@@ -115,15 +115,21 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
   const [announcement, setAnnouncement] = useState("");
   const [jumpOpen, setJumpOpen] = useState(false);
   const [kanbanConfirmOpen, setKanbanConfirmOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState("");
+  const projectSearchRef = useRef<HTMLInputElement>(null);
   const jumpReturnFocus = useRef<HTMLElement | null>(null);
 
   const { view, group, filters } = query;
   const options = useFilterOptions(board, filters);
   const activeTaskFilters = TASK_FILTER_LABELS.filter(([key]) => filters[key] !== "");
+  const projectTerm = projectSearch.trim().toLocaleLowerCase();
+  const visibleProjects = board?.projects.filter((project) =>
+    `${project.label} ${project.id}`.toLocaleLowerCase().includes(projectTerm)) ?? [];
 
-  const openView = useCallback((view: ViewId) => {
-    setQuery({ view, task: null, story: null, focus: null }, "push");
-  }, [setQuery]);
+  const openView = useCallback((nextView: ViewId) => {
+    if (nextView === view && query.task === null && query.story === null && query.focus === null) return;
+    setQuery({ view: nextView, task: null, story: null, focus: null }, "push");
+  }, [query.focus, query.story, query.task, setQuery, view]);
 
   const openProject = useCallback((project: string, nextView: ViewId = view) => {
     setQuery({ view: nextView, group: "none", filters: { ...emptyFilters, project }, task: null, story: null, focus: null }, "push");
@@ -400,34 +406,50 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
 
       <aside className="portfolio-rail" aria-label="Project explorer">
         <div className="portfolio-rail-heading">
-          <span className="view-eyebrow">Portfolio lens</span>
+          <span className="view-eyebrow">Navigate</span>
           <strong>Projects</strong>
           <p>Choose a project, then follow its work through every view.</p>
         </div>
-        <button type="button" className="portfolio-project focus-ring"
-          aria-current={filters.project === "" ? "true" : undefined}
-          onClick={() => openProject("")}>
-          <span className="portfolio-project-name">All projects</span>
-          <span className="portfolio-project-count">{board?.tasks.length ?? 0} tasks</span>
-        </button>
-        {board?.projects.map((project) => {
-          const projectTasks = board.tasks.filter((task) => task.project === project.id || task.projects.includes(project.id));
-          const startable = projectTasks.filter((task) => task.readiness === "startable").length;
-          return <div className="portfolio-project-row" key={project.id}>
-            <button type="button" className="portfolio-project focus-ring"
-              aria-current={filters.project === project.id ? "true" : undefined}
-              onClick={() => openProject(project.id)}>
-              <span className="portfolio-project-name">{project.label}</span>
-              <span className="portfolio-project-count">{projectTasks.length} tasks · {startable} ready</span>
-            </button>
-            <DropdownMenu align="end" trigger={<span className="portfolio-project-more" aria-label={`Open ${project.label} in a view`}><MoreHorizontal size={16} /></span>}
-              groups={[{ label: project.label, items: [
-                { id: "roadmap", label: "Open roadmap", onClick: () => openProject(project.id, "stories") },
-                { id: "board", label: "Open board", onClick: () => openProject(project.id, "kanban") },
-                { id: "deps", label: "Open dependencies", onClick: () => openProject(project.id, "graph") },
-              ] }]} />
-          </div>;
-        })}
+        <div className="portfolio-search">
+          <Search size={16} aria-hidden />
+          <label htmlFor="portfolio-project-search" className="sr-only">Find project</label>
+          <input id="portfolio-project-search" ref={projectSearchRef} type="search" value={projectSearch}
+            placeholder="Find project…" onChange={(event) => setProjectSearch(event.target.value)} />
+          {projectSearch ? <button type="button" className="focus-ring" aria-label="Clear project search"
+            onClick={() => { setProjectSearch(""); projectSearchRef.current?.focus(); }}><X size={16} aria-hidden /></button> : null}
+        </div>
+        {projectTerm && board ? <p className="portfolio-search-count" role="status">
+          {visibleProjects.length} of {board.projects.length} projects
+        </p> : null}
+        <div className="portfolio-projects">
+          <button type="button" className="portfolio-project focus-ring"
+            aria-current={filters.project === "" ? "true" : undefined}
+            onClick={() => openProject("")}>
+            <span className="portfolio-project-name">All projects</span>
+            <span className="portfolio-project-count">{board?.tasks.length ?? 0} tasks</span>
+          </button>
+          {board ? visibleProjects.map((project) => {
+            const projectTasks = board.tasks.filter((task) => task.project === project.id || task.projects.includes(project.id));
+            const startable = projectTasks.filter((task) => task.readiness === "startable").length;
+            return <div className="portfolio-project-row" key={project.id}>
+              <button type="button" className="portfolio-project focus-ring"
+                aria-current={filters.project === project.id ? "true" : undefined}
+                onClick={() => openProject(project.id)}>
+                <span className="portfolio-project-name">{project.label}</span>
+                <span className="portfolio-project-count">{projectTasks.length} tasks · {startable} ready</span>
+              </button>
+              <DropdownMenu align="end" trigger={<span className="portfolio-project-more" aria-label={`Open ${project.label} in a view`}><MoreHorizontal size={16} /></span>}
+                groups={[{ label: project.label, items: [
+                  { id: "roadmap", label: "Open roadmap", onClick: () => openProject(project.id, "stories") },
+                  { id: "board", label: "Open board", onClick: () => openProject(project.id, "kanban") },
+                  { id: "deps", label: "Open dependencies", onClick: () => openProject(project.id, "graph") },
+                ] }]} />
+            </div>;
+          }) : null}
+          {board && projectTerm && visibleProjects.length === 0 ? <p className="portfolio-project-empty">
+            No projects match “{projectSearch.trim()}”.
+          </p> : null}
+        </div>
       </aside>
 
       {error ? (
@@ -485,9 +507,9 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           <p className="view-description">{VIEW_DESCRIPTION[view]}</p>
         </div>
         <div className="portfolio-view-actions" aria-label="Project views">
-          <button type="button" className="focus-ring" onClick={() => openView("stories")}>Roadmap</button>
-          <button type="button" className="focus-ring" onClick={() => openView("kanban")}>Board</button>
-          <button type="button" className="focus-ring" onClick={() => openView("backlog")}>Tasks</button>
+          <button type="button" className="focus-ring" aria-current={view === "stories" ? "page" : undefined} onClick={() => openView("stories")}>Roadmap</button>
+          <button type="button" className="focus-ring" aria-current={view === "kanban" ? "page" : undefined} onClick={() => openView("kanban")}>Board</button>
+          <button type="button" className="focus-ring" aria-current={view === "backlog" ? "page" : undefined} onClick={() => openView("backlog")}>Tasks</button>
         </div>
         {COMPOSED.has(view) ? (
           <span className="tabular view-count">

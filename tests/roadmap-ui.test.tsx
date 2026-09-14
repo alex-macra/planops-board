@@ -217,6 +217,37 @@ describe("Roadmap in the real App", () => {
     expect(screen.getByPlaceholderText(/Search ID/)).toHaveValue("");
   });
 
+  it("finds a project in a large portfolio and keeps the selected scope visible after clearing search", async () => {
+    const board = fixture();
+    const projects = Array.from({ length: 80 }, (_, index) => ({ ...board.projects[0]!, id: `portfolio-${index}`, label: `Project ${index}` }));
+    transport({ ...board, projects }); render(<App />);
+    const search = await screen.findByRole("searchbox", { name: "Find project" });
+    fireEvent.change(search, { target: { value: "portfolio-79" } });
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 80 projects");
+    expect(screen.getByRole("button", { name: /Project 79.*tasks/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Project 78.*tasks/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Project 79.*tasks/ }));
+    expect(window.location.hash).toBe("#project=portfolio-79");
+    fireEvent.change(search, { target: { value: "no-such-project" } });
+    expect(screen.getByText("No projects match “no-such-project”.")).toBeVisible();
+    expect(screen.getByRole("button", { name: /All projects.*tasks/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Clear project search" }));
+    expect(search).toHaveFocus();
+    expect(search).toHaveValue("");
+    expect(screen.getByRole("button", { name: /Project 79.*tasks/ })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("does not add a history step when the active view shortcut is clicked again", async () => {
+    window.history.replaceState(null, "", "/#view=backlog");
+    transport(); render(<App />);
+    const shortcut = await screen.findByRole("button", { name: "Tasks" });
+    expect(shortcut).toHaveAttribute("aria-current", "page");
+    const length = window.history.length;
+    fireEvent.click(shortcut);
+    expect(window.history.length).toBe(length);
+    expect(window.location.hash).toBe("#view=backlog");
+  });
+
   it("reports a stale task filter only when the active view applies it", async () => {
     window.history.replaceState(null, "", "/#view=stories&project=orbit&epic=deleted.md");
     transport(); render(<App />);

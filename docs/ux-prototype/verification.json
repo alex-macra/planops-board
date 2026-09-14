@@ -1,19 +1,21 @@
 {
   "variant": "portfolio",
-  "iteration": "app-interactions",
-  "capturedAt": "2026-09-14T06:35:17.497Z",
+  "iteration": "selected-implementation",
+  "capturedAt": "2026-09-14T06:52:25.387Z",
   "data": "disposable fictional demo",
   "errors": [],
   "mutations": [],
   "mobileHorizontalOverflow": false,
   "mobileMenuBounds": {
     "x": 143,
-    "y": 115.015625,
+    "y": 114.96875,
     "width": 160,
     "height": 327
   },
   "checked": [
     "six views",
+    "desktop and mobile project search",
+    "empty project result",
     "Now menu reader focus return",
     "Board menu to scoped Backlog",
     "reader to visible dependency graph",
@@ -74,6 +76,22 @@
       "hash": "#view=graph"
     },
     {
+      "name": "project-search",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=now"
+    },
+    {
+      "name": "project-search-empty",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=now"
+    },
+    {
       "name": "now-menu",
       "viewport": {
         "width": 1440,
@@ -131,6 +149,14 @@
     },
     {
       "name": "mobile-now",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "hash": "#view=now"
+    },
+    {
+      "name": "mobile-project-search",
       "viewport": {
         "width": 390,
         "height": 844
