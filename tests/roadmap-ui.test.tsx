@@ -189,4 +189,55 @@ describe("Roadmap in the real App", () => {
     for (const id of ["ORB-001", "ORB-002", "ORB-999"]) expect(screen.getByRole("button", { name: id })).toBeVisible();
     expect(screen.queryByRole("button", { name: "SUN-001" })).not.toBeInTheDocument();
   });
+
+  it.each(["now", "stories", "rollup"])("makes paused filters removable in %s without losing project scope", async (view) => {
+    window.history.replaceState(null, "", `/#view=${view}&project=orbit&q=ORB&priority=P1&status=Ready`);
+    transport(); render(<App />);
+    const paused = await screen.findByRole("region", { name: "Paused task filters" });
+    expect(paused).toHaveTextContent("Search: ORB");
+    expect(paused).toHaveTextContent("Priority: P1");
+    fireEvent.click(within(paused).getByRole("button", { name: "Remove search filter: ORB" }));
+    let params = new URLSearchParams(window.location.hash.slice(1));
+    expect(params.has("q")).toBe(false);
+    expect(params.get("priority")).toBe("P1");
+    fireEvent.click(within(paused).getByRole("button", { name: "Clear task filters" }));
+    expect(screen.queryByRole("region", { name: "Paused task filters" })).not.toBeInTheDocument();
+    params = new URLSearchParams(window.location.hash.slice(1));
+    expect(params.get("project")).toBe("orbit");
+    expect(params.has("priority")).toBe(false);
+    expect(params.has("status")).toBe(false);
+  });
+
+  it("opens a new project without stale row filters or grouping", async () => {
+    window.history.replaceState(null, "", "/#view=backlog&project=orbit&q=ORB&epic=plans%2Fmoon.md&priority=P1&status=Blocked&group=epic");
+    transport(); render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Solar.*tasks/ }));
+    expect(window.location.hash).toBe("#view=backlog&project=sun");
+    expect(screen.getByRole("button", { name: "SUN-001" })).toBeVisible();
+    expect(screen.getByPlaceholderText(/Search ID/)).toHaveValue("");
+  });
+
+  it("reports a stale task filter only when the active view applies it", async () => {
+    window.history.replaceState(null, "", "/#view=stories&project=orbit&epic=deleted.md");
+    transport(); render(<App />);
+    const paused = await screen.findByRole("region", { name: "Paused task filters" });
+    expect(paused).toHaveTextContent("Epic: deleted.md");
+    expect(screen.queryByText("This link filters on something that no longer exists")).not.toBeInTheDocument();
+    fireEvent.click(within(paused).getByRole("button", { name: "View filtered tasks" }));
+    expect(screen.getByText("This link filters on something that no longer exists")).toBeVisible();
+  });
+
+  it.each(["now", "backlog", "kanban"])("offers task navigation in %s without nesting actions inside the task button", async (view) => {
+    window.history.replaceState(null, "", `/#view=${view}&project=orbit`);
+    transport(); const { container } = render(<App />);
+    const trigger = await screen.findByRole("button", { name: "Actions for ORB-001" });
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu", { name: "Actions for ORB-001" });
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent))
+      .toEqual(["Open task details", "Show dependencies", "Find in backlog"]);
+    expect(container.querySelector("button button")).toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Find in backlog" }));
+    expect(window.location.hash).toBe("#view=backlog&q=ORB-001&project=orbit");
+    expect(screen.getByRole("button", { name: "ORB-001" })).toBeVisible();
+  });
 });

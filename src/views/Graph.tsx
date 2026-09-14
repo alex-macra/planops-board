@@ -1,10 +1,10 @@
-import { EmptyState, SegmentedControl, Spinner } from "../ui/index.tsx";
+import { Button, EmptyState, SegmentedControl, Spinner } from "../ui/index.tsx";
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 import type { JSX } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { Board, Task } from "../api.ts";
-import { Tag } from "../components/Tag.tsx";
+import { TaskActions } from "../components/TaskActions.tsx";
 import { buildDependencyGraph } from "../dependency-graph.ts";
 
 interface Props {
@@ -12,6 +12,9 @@ interface Props {
   readonly tasks: readonly Task[];
   readonly selectedId: string | null;
   readonly onSelectTask: (taskId: string) => void;
+  readonly onFocusTask: (taskId: string | null) => void;
+  readonly onOpenGraph: (taskId: string) => void;
+  readonly onShowInBacklog: (taskId: string) => void;
 }
 
 const NODE_WIDTH = 190;
@@ -55,7 +58,7 @@ interface Layout {
   readonly height: number;
 }
 
-export function Graph({ board, tasks, selectedId, onSelectTask }: Props): JSX.Element {
+export function Graph({ board, tasks, selectedId, onSelectTask, onFocusTask, onOpenGraph, onShowInBacklog }: Props): JSX.Element {
   const [layout, setLayout] = useState<Layout | null>(null);
   const [busy, setBusy] = useState(true);
   // A whole-plan graph is far wider than most screens; fit by default so
@@ -67,8 +70,6 @@ export function Graph({ board, tasks, selectedId, onSelectTask }: Props): JSX.El
   // already-classified nodes are visible.
   const graph = useMemo(() => buildDependencyGraph(board.tasks, board.workflow), [board.tasks, board.workflow]);
 
-  // Only tasks that participate in a dependency relationship among the current
-  // filter selection; isolated nodes would be noise in a DAG.
   const connected = useMemo(() => {
     const visible = new Set(tasks.map((task) => task.id));
     const ids = new Set<string>();
@@ -77,8 +78,9 @@ export function Graph({ board, tasks, selectedId, onSelectTask }: Props): JSX.El
       ids.add(edge.prerequisite.id);
       ids.add(edge.dependant.id);
     }
+    if (selectedId && visible.has(selectedId)) ids.add(selectedId);
     return tasks.filter((task) => ids.has(task.id) && graph.tasksById.has(task.id));
-  }, [graph, tasks]);
+  }, [graph, tasks, selectedId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,17 +193,45 @@ export function Graph({ board, tasks, selectedId, onSelectTask }: Props): JSX.El
     );
   }
 
+  const focusedTask = selectedId ? graph.tasksById.get(selectedId) : undefined;
+  const focusedTaskVisible = tasks.some((task) => task.id === selectedId);
+  const selection = selectedId ? (
+    <section className="graph-selection" aria-label="Selected dependency task">
+      <div className="min-w-0 flex-1">
+        <p className="view-eyebrow">Selected task</p>
+        <h3><span className="mono">{selectedId}</span>{focusedTask ? ` · ${focusedTask.title ?? focusedTask.outcome}` : ""}</h3>
+        <p>{focusedTask
+          ? focusedTaskVisible
+            ? `${highlighted.size} upstream prerequisite${highlighted.size === 1 ? "" : "s"}. Select another node to follow its dependencies.`
+            : "This task is outside the current project or task filters."
+          : "This task is missing or has a duplicate ID. Choose another node."}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {focusedTask ? <>
+          {!focusedTaskVisible ? <Button size="sm" variant="secondary" onClick={() => onOpenGraph(selectedId)}>Show all dependencies</Button> : null}
+          <Button size="sm" variant="secondary" onClick={() => onSelectTask(selectedId)}>Open task details</Button>
+          <TaskActions taskId={selectedId} onOpenDetails={() => onSelectTask(selectedId)} onShowInBacklog={() => onShowInBacklog(selectedId)} />
+        </> : null}
+        <Button size="sm" variant="ghost" onClick={() => onFocusTask(null)}>Clear selection</Button>
+      </div>
+    </section>
+  ) : null;
+
   if (!layout || layout.nodes.length === 0) {
     return (
-      <EmptyState
-        title="No dependency edges in this selection"
-        description="Widen the filters - dependencies are declared in each document."
-      />
+      <div className="space-y-2">
+        {selection}
+        <EmptyState
+          title="No dependency edges in this selection"
+          description="Widen the filters - dependencies are declared in each document."
+        />
+      </div>
     );
   }
 
   return (
     <div className="space-y-2">
+      {selection}
       <div className="flex flex-wrap items-center gap-3 text-xs text-ui-text-subtle">
         <span>
           {layout.nodes.length} nodes · {layout.edges.length} edges
@@ -244,13 +274,7 @@ export function Graph({ board, tasks, selectedId, onSelectTask }: Props): JSX.El
           </svg>
           needs gate check
         </span>
-        {selectedId ? (
-          <Tag tone="progress">
-            {highlighted.size} task(s) block {selectedId}
-          </Tag>
-        ) : (
-          <span>Select a node to highlight everything it waits on.</span>
-        )}
+        {!selectedId ? <span>Select a node to highlight everything it waits on.</span> : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-xs text-ui-text-subtle">
@@ -276,7 +300,7 @@ export function Graph({ board, tasks, selectedId, onSelectTask }: Props): JSX.El
           }
           viewBox={fit ? `0 0 ${layout.width + 40} ${layout.height + 40}` : undefined}
           preserveAspectRatio={fit ? "xMidYMid meet" : undefined}
-          role="img"
+          role="group"
           aria-label="Task dependency graph"
         >
           <defs>
@@ -328,12 +352,13 @@ export function Graph({ board, tasks, selectedId, onSelectTask }: Props): JSX.El
                   className="graph-node cursor-pointer"
                   role="button"
                   tabIndex={0}
-                  aria-label={`Open ${node.id}: ${node.task.title ?? node.task.outcome}`}
-                  onClick={() => onSelectTask(node.id)}
+                  aria-label={`Select ${node.id}: ${node.task.title ?? node.task.outcome}`}
+                  aria-pressed={isSelected}
+                  onClick={() => onFocusTask(node.id)}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
-                    onSelectTask(node.id);
+                    onFocusTask(node.id);
                   }}
                 >
                   <rect

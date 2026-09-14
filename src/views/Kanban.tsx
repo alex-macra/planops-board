@@ -1,11 +1,12 @@
-import { ConfirmDialog, DropdownMenu, EmptyState } from "../ui/index.tsx";
-import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { ConfirmDialog, EmptyState } from "../ui/index.tsx";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Board, Task, Workflow } from "../api.ts";
 import { detailOf, vocabularyOf } from "../api.ts";
 import { StatusTag, Tag } from "../components/Tag.tsx";
+import { TaskActions } from "../components/TaskActions.tsx";
 import { priorityTone, statusRailTone, statusTone } from "../components/tone.ts";
 import { cardData, type CardDragData } from "../dnd/data.ts";
 import {
@@ -175,36 +176,21 @@ function TaskCard({
         </span>
       </button>
       <span className="board-card-menu">
-          <DropdownMenu
-            align="end"
-            trigger={
-              <span
-                className="focus-ring rounded p-0.5 text-ui-text-subtle hover:bg-ui-bg-muted"
-                aria-label={`Actions for ${task.id}`}
-              >
-                <MoreHorizontal size={14} />
-              </span>
-            }
-            groups={[
-              {
-                label: "Inspect",
-                items: [
-                  { id: "open", label: "Open task details", onClick: onSelect },
-                  { id: "graph", label: "Show dependencies", onClick: onOpenGraph },
-                  { id: "backlog", label: "Find in backlog", onClick: onShowInBacklog },
-                ],
-              },
-              ...(editable && task.statusCell ? [{
-                label: "Move to",
-                items: bases.map((base) => ({
-                  id: base,
-                  label: base,
-                  disabled: base === task.statusBase,
-                  onClick: () => onMove(base),
-                })),
-              }] : []),
-            ]}
-          />
+        <TaskActions
+          taskId={task.id}
+          onOpenDetails={onSelect}
+          onOpenGraph={onOpenGraph}
+          onShowInBacklog={onShowInBacklog}
+          extraGroups={editable && task.statusCell ? [{
+            label: "Move to",
+            items: bases.map((base) => ({
+              id: base,
+              label: base,
+              disabled: base === task.statusBase,
+              onClick: () => onMove(base),
+            })),
+          }] : []}
+        />
       </span>
     </div>
   );

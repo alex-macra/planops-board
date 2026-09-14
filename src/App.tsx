@@ -10,7 +10,7 @@ import {
   useDarkMode,
   useToast,
 } from "./ui/index.tsx";
-import { Check, MoreHorizontal, RefreshCw, Search, Undo2 } from "lucide-react";
+import { Check, MoreHorizontal, RefreshCw, Search, Undo2, X } from "lucide-react";
 import type { JSX } from "react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -70,6 +70,10 @@ const VIEW_DESCRIPTION: Record<ViewId, string> = {
 };
 
 const COMPOSED = new Set<ViewId>(["now", "stories", "rollup"]);
+const TASK_FILTER_LABELS = [
+  ["text", "Search"], ["epic", "Epic"], ["repository", "Repository"],
+  ["priority", "Priority"], ["status", "Status"], ["readiness", "Readiness"],
+] as const;
 
 type StaleKey = "project" | "epic" | "repository";
 
@@ -115,6 +119,15 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
 
   const { view, group, filters } = query;
   const options = useFilterOptions(board, filters);
+  const activeTaskFilters = TASK_FILTER_LABELS.filter(([key]) => filters[key] !== "");
+
+  const openView = useCallback((view: ViewId) => {
+    setQuery({ view, task: null, story: null, focus: null }, "push");
+  }, [setQuery]);
+
+  const openProject = useCallback((project: string, nextView: ViewId = view) => {
+    setQuery({ view: nextView, group: "none", filters: { ...emptyFilters, project }, task: null, story: null, focus: null }, "push");
+  }, [setQuery, view]);
 
   // The optimistic column lives only on the render path; `board` stays byte-faithful
   // to the server so the digest and expected-value guards keep meaning what they say.
@@ -233,12 +246,15 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
   }, [openCanonicalTask]);
 
   const openGraph = useCallback((task: string) => {
-    setQuery({ view: "graph", group: "none", filters: emptyFilters, task, story: null }, "push");
+    setQuery({ view: "graph", group: "none", filters: emptyFilters, focus: task, task: null, story: null }, "push");
   }, [setQuery]);
 
   const showInBacklog = useCallback((task: string) => {
-    setQuery({ view: "backlog", group: "none", filters: { ...emptyFilters, project: filters.project, text: task }, task: null, story: null }, "push");
-  }, [filters.project, setQuery]);
+    const matches = board?.tasks.filter((row) => row.id === task) ?? [];
+    const inScope = board && matches.length === 1
+      && filterTasks(matches, { ...emptyFilters, project: filters.project }, board.workflow).length === 1;
+    setQuery({ view: "backlog", group: "none", filters: { ...emptyFilters, project: inScope ? filters.project : "", text: task }, task: null, story: null, focus: null }, "push");
+  }, [board, filters.project, setQuery]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -289,6 +305,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
     if (filters.project && !board.projects.some((project) => project.id === filters.project)) {
       problems.push({ label: `project “${filters.project}”`, key: "project" });
     }
+    if (COMPOSED.has(view)) return problems;
     if (filters.epic && !board.documents.some((document) => document.path === filters.epic)) {
       problems.push({ label: `epic “${filters.epic}”`, key: "epic" });
     }
@@ -299,7 +316,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
       problems.push({ label: `repository “${filters.repository}”`, key: "repository" });
     }
     return problems;
-  }, [board, filters]);
+  }, [board, filters, view]);
 
   const scopeLabel = board?.projects.find((project) => project.id === filters.project)?.label;
   const scopedTasks = useMemo(
@@ -357,11 +374,11 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
             <SegmentedControl
               options={VIEWS}
               value={view}
-              onChange={(next) => setQuery({ view: next as ViewId })}
+              onChange={(next) => openView(next as ViewId)}
               ariaLabel="Board view"
             />
           </div>
-          <SavedViews query={query} sourceSha={session.sourceSha} onApply={setQuery} />
+          <SavedViews query={query} sourceSha={session.sourceSha} onApply={(patch) => setQuery({ ...patch, task: null, story: null, focus: null }, "push")} />
         </div>
         <details className="source-freshness" data-testid="source-freshness">
           <summary>
@@ -389,7 +406,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
         </div>
         <button type="button" className="portfolio-project focus-ring"
           aria-current={filters.project === "" ? "true" : undefined}
-          onClick={() => setQuery({ filters: { project: "" } })}>
+          onClick={() => openProject("")}>
           <span className="portfolio-project-name">All projects</span>
           <span className="portfolio-project-count">{board?.tasks.length ?? 0} tasks</span>
         </button>
@@ -399,15 +416,15 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           return <div className="portfolio-project-row" key={project.id}>
             <button type="button" className="portfolio-project focus-ring"
               aria-current={filters.project === project.id ? "true" : undefined}
-              onClick={() => setQuery({ filters: { project: project.id } })}>
+              onClick={() => openProject(project.id)}>
               <span className="portfolio-project-name">{project.label}</span>
               <span className="portfolio-project-count">{projectTasks.length} tasks · {startable} ready</span>
             </button>
             <DropdownMenu align="end" trigger={<span className="portfolio-project-more" aria-label={`Open ${project.label} in a view`}><MoreHorizontal size={16} /></span>}
               groups={[{ label: project.label, items: [
-                { id: "roadmap", label: "Open roadmap", onClick: () => setQuery({ view: "stories", filters: { ...emptyFilters, project: project.id } }) },
-                { id: "board", label: "Open board", onClick: () => setQuery({ view: "kanban", filters: { ...emptyFilters, project: project.id } }) },
-                { id: "deps", label: "Open dependencies", onClick: () => setQuery({ view: "graph", filters: { ...emptyFilters, project: project.id } }) },
+                { id: "roadmap", label: "Open roadmap", onClick: () => openProject(project.id, "stories") },
+                { id: "board", label: "Open board", onClick: () => openProject(project.id, "kanban") },
+                { id: "deps", label: "Open dependencies", onClick: () => openProject(project.id, "graph") },
               ] }]} />
           </div>;
         })}
@@ -468,9 +485,9 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           <p className="view-description">{VIEW_DESCRIPTION[view]}</p>
         </div>
         <div className="portfolio-view-actions" aria-label="Project views">
-          <button type="button" className="focus-ring" onClick={() => setQuery({ view: "stories" })}>Roadmap</button>
-          <button type="button" className="focus-ring" onClick={() => setQuery({ view: "kanban" })}>Board</button>
-          <button type="button" className="focus-ring" onClick={() => setQuery({ view: "backlog" })}>Tasks</button>
+          <button type="button" className="focus-ring" onClick={() => openView("stories")}>Roadmap</button>
+          <button type="button" className="focus-ring" onClick={() => openView("kanban")}>Board</button>
+          <button type="button" className="focus-ring" onClick={() => openView("backlog")}>Tasks</button>
         </div>
         {COMPOSED.has(view) ? (
           <span className="tabular view-count">
@@ -478,6 +495,27 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           </span>
         ) : null}
       </div>
+
+      {COMPOSED.has(view) && activeTaskFilters.length > 0 ? (
+        <section className="paused-filters" aria-label="Paused task filters">
+          <div>
+            <h3>Task filters are paused</h3>
+            <p>This overview uses project scope. These filters resume in Board, Backlog and Dependencies.</p>
+            <div className="paused-filter-chips">
+              {activeTaskFilters.map(([key, label]) => (
+                <button type="button" key={key} className="focus-ring" aria-label={`Remove ${label.toLowerCase()} filter: ${filters[key]}`}
+                  onClick={() => setQuery({ filters: { [key]: "" } })}>
+                  <span>{label}: {filters[key]}</span><X size={12} aria-hidden />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={() => openView("backlog")}>View filtered tasks</Button>
+            <Button size="sm" variant="ghost" onClick={() => setQuery({ filters: { ...emptyFilters, project: filters.project } })}>Clear task filters</Button>
+          </div>
+        </section>
+      ) : null}
 
       {/* Grouping and filters refine the active work view. Now, Stories and
        * Rollup are deliberately composed overviews that answer a question
@@ -573,7 +611,9 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
                 tasks={scopedTasks}
                 lastChanged={lastChanged}
                 onSelectTask={openTask}
-                onOpenBacklog={() => setQuery({ view: "backlog" })}
+                onOpenGraph={openGraph}
+                onShowInBacklog={showInBacklog}
+                onOpenBacklog={() => openView("backlog")}
               />
             ) : null}
             {view === "stories" ? (
@@ -581,7 +621,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
                 board={board}
                 tasks={scopedTasks}
                 onSelectStory={(story) => setQuery({ story }, "push")}
-                onOpenBacklog={() => setQuery({ view: "backlog" })}
+                onOpenBacklog={() => openView("backlog")}
               />
             ) : null}
             {view === "rollup" ? (
@@ -590,19 +630,20 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
                 tasks={scopedTasks}
                 lastChanged={lastChanged}
                 onOpenProject={(project) =>
-                  setQuery({ view: "kanban", filters: { ...emptyFilters, project } })
+                  openProject(project, "kanban")
                 }
                 onOpenEpic={(file) =>
-                  setQuery({ view: "kanban", filters: { ...emptyFilters, epic: file } })
+                  setQuery({ view: "kanban", filters: { ...emptyFilters, epic: file }, focus: null }, "push")
                 }
                 onOpenRepository={(repository) =>
-                  setQuery({ view: "kanban", filters: { ...emptyFilters, repository } })
+                  setQuery({ view: "kanban", filters: { ...emptyFilters, repository }, focus: null }, "push")
                 }
                 onOpenStartable={() =>
                   setQuery({
                     view: "kanban",
                     filters: { ...emptyFilters, project: filters.project, readiness: "startable" },
-                  })
+                    focus: null,
+                  }, "push")
                 }
                 onSelectTask={openTask}
               />
@@ -627,6 +668,8 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
                 board={board}
                 tasks={tasks}
                 onSelectTask={openTask}
+                onOpenGraph={openGraph}
+                onShowInBacklog={showInBacklog}
                 onReorder={reorder}
                 lastChanged={lastChanged}
                 reorderable={session.capabilities.localWrites && filters.epic !== ""}
@@ -637,8 +680,11 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
                 <Graph
                   board={board}
                   tasks={tasks}
-                  selectedId={query.task}
+                  selectedId={query.focus ?? query.task}
                   onSelectTask={openTask}
+                  onFocusTask={(focus) => setQuery({ focus, task: null, story: null }, "push")}
+                  onOpenGraph={openGraph}
+                  onShowInBacklog={showInBacklog}
                 />
               </Suspense>
             ) : null}

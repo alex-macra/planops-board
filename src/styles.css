@@ -629,8 +629,19 @@ html.dark {
 
   .now-row {
     @apply grid w-full grid-cols-[8.5rem_2rem_minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1
-           border-t border-ui-border/60 px-3.5 py-2 text-left text-[13px] transition-colors
-           first:border-t-0 hover:bg-ui-accent/[0.03];
+           min-w-0 flex-1 px-3.5 py-2 text-left text-[13px] transition-colors hover:bg-ui-accent/[0.03];
+  }
+
+  .now-task-row {
+    @apply flex items-center border-t border-ui-border/60 pr-1 first:border-t-0;
+  }
+
+  .now-task-row > button:last-child {
+    @apply shrink-0;
+  }
+
+  .task-actions-icon {
+    @apply flex size-11 shrink-0 items-center justify-center rounded-lg text-ui-text-subtle hover:bg-ui-bg-muted hover:text-ui-text;
   }
 
   .now-row-id {
@@ -1105,6 +1116,8 @@ html.dark {
 .ux-portfolio {
   max-width: none;
   background: rgb(var(--ui-bg));
+}
+:root:has(.ux-portfolio) {
   --ui-bg: 248 247 244;
   --ui-bg-raised: 255 255 253;
   --ui-bg-muted: 241 239 235;
@@ -1117,7 +1130,7 @@ html.dark {
   --ui-accent-hover: 63 53 117;
   --ui-accent-fg: 255 255 255;
 }
-html.dark .ux-portfolio {
+html.dark:has(.ux-portfolio) {
   --ui-bg: 17 16 23;
   --ui-bg-raised: 26 24 34;
   --ui-bg-muted: 37 34 47;
@@ -1171,6 +1184,10 @@ html.dark .ux-portfolio {
   position: absolute;
   right: 0.5rem;
   top: 0.55rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
 }
 .ux-portfolio .portfolio-project-more { display: flex; padding: 0.25rem; color: rgb(var(--ui-text-subtle)); }
 .ux-portfolio .portfolio-project-more:hover { color: rgb(var(--ui-accent)); }
@@ -1201,6 +1218,40 @@ html.dark .ux-portfolio {
 .ux-portfolio .portfolio-view-actions > button:hover { background: rgb(var(--ui-accent) / 0.08); }
 .ux-portfolio .board-card-menu { opacity: 1; }
 .ux-portfolio .board-card-menu > button { background: rgb(var(--ui-bg-raised)); }
+
+.paused-filters,
+.graph-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgb(var(--ui-accent) / 0.22);
+  border-radius: 0.75rem;
+  background: rgb(var(--ui-accent) / 0.035);
+}
+.paused-filters > div:first-child { flex: 1; min-width: min(100%, 18rem); }
+.paused-filters h3,
+.graph-selection h3 { color: rgb(var(--ui-text)); font-size: 0.85rem; font-weight: 600; overflow-wrap: anywhere; }
+.paused-filters p,
+.graph-selection p:not(.view-eyebrow) { margin-top: 0.25rem; color: rgb(var(--ui-text-muted)); font-size: 0.75rem; line-height: 1.5; }
+.paused-filter-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.65rem; }
+.paused-filter-chips > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+  min-height: 2rem;
+  border: 1px solid rgb(var(--ui-border));
+  border-radius: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  background: rgb(var(--ui-bg-raised));
+  color: rgb(var(--ui-text-muted));
+  font-size: 0.72rem;
+  text-align: left;
+}
+.paused-filter-chips > button > span { overflow-wrap: anywhere; min-width: 0; }
+.paused-filter-chips > button > svg { flex-shrink: 0; }
 
 @media (min-width: 960px) {
   .ux-portfolio .portfolio-rail {

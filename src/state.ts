@@ -677,6 +677,7 @@ export interface BoardQuery {
   readonly filters: Filters;
   readonly task: string | null;
   readonly story: string | null;
+  readonly focus: string | null;
 }
 
 export interface BoardQueryPatch {
@@ -685,6 +686,7 @@ export interface BoardQueryPatch {
   readonly filters?: Partial<Filters>;
   readonly task?: string | null;
   readonly story?: string | null;
+  readonly focus?: string | null;
 }
 
 const DEFAULT_QUERY: BoardQuery = {
@@ -693,6 +695,7 @@ const DEFAULT_QUERY: BoardQuery = {
   filters: emptyFilters,
   task: null,
   story: null,
+  focus: null,
 };
 
 function parseHash(hash: string): BoardQuery {
@@ -720,6 +723,7 @@ function parseHash(hash: string): BoardQuery {
     },
     task: params.get("task"),
     story: params.get("story"),
+    focus: view === "graph" ? params.get("focus") : null,
   };
 }
 
@@ -736,6 +740,7 @@ function writeHash(query: BoardQuery): string {
   if (query.filters.readiness) params.set("readiness", query.filters.readiness);
   if (query.task) params.set("task", query.task);
   if (query.story) params.set("story", query.story);
+  if (query.view === "graph" && query.focus) params.set("focus", query.focus);
   return params.toString();
 }
 
@@ -752,6 +757,7 @@ export function taskOnlyQuery(task: string): BoardQueryPatch {
     filters: emptyFilters,
     task,
     story: null,
+    focus: null,
   };
 }
 

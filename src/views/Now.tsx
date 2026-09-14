@@ -3,6 +3,7 @@ import { useMemo } from "react";
 
 import type { Board, LastChange, Task, Workflow } from "../api.ts";
 import { Pill } from "../components/Pill.tsx";
+import { TaskActions } from "../components/TaskActions.tsx";
 import { statusTone } from "../components/tone.ts";
 import { buildNow, STALE_DAYS, type NowGroup, type NowRow } from "../now.ts";
 
@@ -12,22 +13,31 @@ interface Props {
   readonly lastChanged: Readonly<Record<string, LastChange>>;
   readonly onSelectTask: (taskId: string) => void;
   readonly onOpenBacklog: () => void;
+  readonly onOpenGraph?: (taskId: string) => void;
+  readonly onShowInBacklog?: (taskId: string) => void;
 }
 
-function Row({ row, workflow, onSelect }: { row: NowRow; workflow: Workflow; onSelect: () => void }): JSX.Element {
+type TaskNavigation = Pick<Props, "onSelectTask" | "onOpenGraph" | "onShowInBacklog">;
+
+function Row({ row, workflow, onSelectTask, onOpenGraph, onShowInBacklog }: { row: NowRow; workflow: Workflow } & TaskNavigation): JSX.Element {
   const { task } = row;
   return (
-    <button type="button" className="now-row focus-ring" onClick={onSelect}>
-      <span className="now-row-id">{task.id}</span>
-      <span className={`now-row-priority ${task.priority === workflow.priorityOrder[0] ? "text-[rgb(var(--tone-blocked))]" : ""}`}>
-        {task.priority ?? ""}
-      </span>
-      <span className="now-row-what">{task.title ?? task.outcome ?? task.id}</span>
-      <span className="now-row-side">
-        {row.note ? <span className="truncate">{row.note}</span> : null}
-        <Pill tone={statusTone(task.statusBase, workflow)}>{task.statusBase ?? "no status"}</Pill>
-      </span>
-    </button>
+    <div className="now-task-row">
+      <button type="button" className="now-row focus-ring" onClick={() => onSelectTask(task.id)}>
+        <span className="now-row-id">{task.id}</span>
+        <span className={`now-row-priority ${task.priority === workflow.priorityOrder[0] ? "text-[rgb(var(--tone-blocked))]" : ""}`}>
+          {task.priority ?? ""}
+        </span>
+        <span className="now-row-what">{task.title ?? task.outcome ?? task.id}</span>
+        <span className="now-row-side">
+          {row.note ? <span className="truncate">{row.note}</span> : null}
+          <Pill tone={statusTone(task.statusBase, workflow)}>{task.statusBase ?? "no status"}</Pill>
+        </span>
+      </button>
+      <TaskActions taskId={task.id} onOpenDetails={() => onSelectTask(task.id)}
+        onOpenGraph={onOpenGraph && (() => onOpenGraph(task.id))}
+        onShowInBacklog={onShowInBacklog && (() => onShowInBacklog(task.id))} />
+    </div>
   );
 }
 
@@ -42,11 +52,12 @@ function Group({
   group,
   workflow,
   onSelectTask,
+  onOpenGraph,
+  onShowInBacklog,
 }: {
   group: NowGroup;
   workflow: Workflow;
-  onSelectTask: (taskId: string) => void;
-}): JSX.Element {
+} & TaskNavigation): JSX.Element {
   const head = group.rows.slice(0, VISIBLE);
   const tail = group.rows.slice(VISIBLE);
   return (
@@ -58,7 +69,7 @@ function Group({
       </div>
       <div>
         {head.map((row) => (
-          <Row key={row.task.id} row={row} workflow={workflow} onSelect={() => onSelectTask(row.task.id)} />
+          <Row key={row.task.id} row={row} workflow={workflow} onSelectTask={onSelectTask} onOpenGraph={onOpenGraph} onShowInBacklog={onShowInBacklog} />
         ))}
       </div>
       {tail.length > 0 ? (
@@ -68,7 +79,7 @@ function Group({
           </summary>
           <div>
             {tail.map((row) => (
-              <Row key={row.task.id} row={row} workflow={workflow} onSelect={() => onSelectTask(row.task.id)} />
+              <Row key={row.task.id} row={row} workflow={workflow} onSelectTask={onSelectTask} onOpenGraph={onOpenGraph} onShowInBacklog={onShowInBacklog} />
             ))}
           </div>
         </details>
@@ -83,6 +94,8 @@ export function Now({
   lastChanged,
   onSelectTask,
   onOpenBacklog,
+  onOpenGraph,
+  onShowInBacklog,
 }: Props): JSX.Element {
   const now = useMemo(() => buildNow(board, tasks, lastChanged), [board, tasks, lastChanged]);
 
@@ -99,7 +112,7 @@ export function Now({
       </div>
 
       {now.groups.map((group) => (
-        <Group key={group.id} group={group} workflow={board.workflow} onSelectTask={onSelectTask} />
+        <Group key={group.id} group={group} workflow={board.workflow} onSelectTask={onSelectTask} onOpenGraph={onOpenGraph} onShowInBacklog={onShowInBacklog} />
       ))}
 
       {now.groups.length === 0 ? (

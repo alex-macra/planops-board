@@ -1,26 +1,66 @@
 [
   {
-    "view": "now",
+    "state": "now",
     "violations": []
   },
   {
-    "view": "stories",
+    "state": "roadmap",
     "violations": []
   },
   {
-    "view": "rollup",
+    "state": "rollup",
     "violations": []
   },
   {
-    "view": "kanban",
+    "state": "board",
     "violations": []
   },
   {
-    "view": "backlog",
+    "state": "backlog",
     "violations": []
   },
   {
-    "view": "graph",
+    "state": "dependencies",
+    "violations": []
+  },
+  {
+    "state": "now-menu",
+    "violations": []
+  },
+  {
+    "state": "board-menu",
+    "violations": []
+  },
+  {
+    "state": "backlog-from-card",
+    "violations": []
+  },
+  {
+    "state": "task-detail",
+    "violations": []
+  },
+  {
+    "state": "dependencies-focused",
+    "violations": []
+  },
+  {
+    "state": "paused-filters",
+    "violations": []
+  },
+  {
+    "state": "backlog-menu",
+    "violations": []
+  },
+  {
+    "state": "mobile-now",
+    "violations": []
+  },
+  {
+    "state": "mobile-menu",
+    "violations": []
+  },
+  {
+    "state": "dark-menu",
     "violations": []
   }
 ]

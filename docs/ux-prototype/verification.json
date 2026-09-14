@@ -1,6 +1,157 @@
 {
   "variant": "portfolio",
-  "taskId": "MGA-002",
+  "iteration": "app-interactions",
+  "capturedAt": "2026-09-14T06:35:17.497Z",
+  "data": "disposable fictional demo",
   "errors": [],
-  "mobileHorizontalOverflow": false
+  "mutations": [],
+  "mobileHorizontalOverflow": false,
+  "mobileMenuBounds": {
+    "x": 143,
+    "y": 115.015625,
+    "width": 160,
+    "height": 327
+  },
+  "checked": [
+    "six views",
+    "Now menu reader focus return",
+    "Board menu to scoped Backlog",
+    "reader to visible dependency graph",
+    "paused filters to filtered Backlog",
+    "Backlog menu",
+    "320px menu bounds and Tab dismissal",
+    "isolated graph task",
+    "missing graph task",
+    "dark menu"
+  ],
+  "screenshots": [
+    {
+      "name": "now",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=now"
+    },
+    {
+      "name": "roadmap",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=stories"
+    },
+    {
+      "name": "rollup",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=rollup"
+    },
+    {
+      "name": "board",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=kanban"
+    },
+    {
+      "name": "backlog",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=backlog"
+    },
+    {
+      "name": "dependencies",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=graph"
+    },
+    {
+      "name": "now-menu",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=now"
+    },
+    {
+      "name": "board-menu",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=kanban&project=moon-garden"
+    },
+    {
+      "name": "backlog-from-card",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=backlog&q=MGA-002&project=moon-garden"
+    },
+    {
+      "name": "task-detail",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=backlog&q=MGA-002&project=moon-garden&task=MGA-002"
+    },
+    {
+      "name": "dependencies-focused",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=graph&focus=MGA-002"
+    },
+    {
+      "name": "paused-filters",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=stories&project=moon-garden&q=MGA-002&priority=P1&status=Ready"
+    },
+    {
+      "name": "backlog-menu",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=backlog&q=MGA-002&project=moon-garden&priority=P1&status=Ready"
+    },
+    {
+      "name": "mobile-now",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "hash": "#view=now"
+    },
+    {
+      "name": "mobile-menu",
+      "viewport": {
+        "width": 320,
+        "height": 720
+      },
+      "hash": "#view=kanban"
+    },
+    {
+      "name": "dark-menu",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "hash": "#view=now"
+    }
+  ]
 }

@@ -20,6 +20,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -516,13 +517,15 @@ export interface DropdownGroup {
 
 export interface DropdownMenuProps {
   readonly trigger: ReactNode;
+  readonly triggerLabel?: string;
   readonly groups: readonly DropdownGroup[];
   readonly side?: "bottom" | "top";
   readonly align?: "start" | "end";
   readonly className?: string;
 }
 
-export function DropdownMenu({ trigger, groups, side = "bottom", align = "start", className }: DropdownMenuProps): JSX.Element {
+export function DropdownMenu({ trigger, triggerLabel, groups, side = "bottom", align = "start", className }: DropdownMenuProps): JSX.Element {
+  const id = useId();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -532,9 +535,19 @@ export function DropdownMenu({ trigger, groups, side = "bottom", align = "start"
     const triggerElement = triggerRef.current;
     if (!triggerElement) return;
     const bounds = triggerElement.getBoundingClientRect();
+    const menu = menuRef.current;
+    const width = menu?.offsetWidth ?? 0;
+    const height = menu?.offsetHeight ?? 0;
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    const below = bounds.bottom + 4;
+    const above = bounds.top - 4 - height;
+    let top = side === "bottom" ? below : above;
+    if (side === "bottom" && below + height > viewportHeight - 8 && above >= 8) top = above;
+    if (side === "top" && above < 8 && below + height <= viewportHeight - 8) top = below;
     setPosition({
-      top: side === "bottom" ? bounds.bottom + 4 : bounds.top - 4,
-      left: align === "start" ? bounds.left : bounds.right,
+      top: Math.max(8, Math.min(top, viewportHeight - height - 8)),
+      left: Math.max(8, Math.min(align === "start" ? bounds.left : bounds.right - width, viewportWidth - width - 8)),
     });
   }, [align, side]);
 
@@ -547,20 +560,24 @@ export function DropdownMenu({ trigger, groups, side = "bottom", align = "start"
     });
   }, [updatePosition]);
 
+  useLayoutEffect(() => {
+    if (open) updatePosition();
+  }, [open, updatePosition]);
+
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: MouseEvent): void => {
+    const onPointerDown = (event: PointerEvent): void => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
       setOpen(false);
     };
     const onReposition = (): void => updatePosition();
-    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("scroll", onReposition, true);
     window.addEventListener("resize", onReposition);
     return () => {
-      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("scroll", onReposition, true);
       window.removeEventListener("resize", onReposition);
     };
@@ -579,11 +596,13 @@ export function DropdownMenu({ trigger, groups, side = "bottom", align = "start"
     else if (event.key === "End") next = items.at(-1);
     else if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       setOpen(false);
       triggerRef.current?.focus();
       return;
     } else if (event.key === "Tab") {
       setOpen(false);
+      triggerRef.current?.focus();
       return;
     }
     if (next) {
@@ -596,7 +615,10 @@ export function DropdownMenu({ trigger, groups, side = "bottom", align = "start"
     <>
       <button
         ref={triggerRef}
+        id={`${id}-trigger`}
         type="button"
+        aria-label={triggerLabel}
+        aria-controls={open ? id : undefined}
         aria-expanded={open}
         aria-haspopup="menu"
         className="focus-ring inline-flex cursor-pointer rounded-lg"
@@ -616,12 +638,12 @@ export function DropdownMenu({ trigger, groups, side = "bottom", align = "start"
       {open ? createPortal(
         <div
           ref={menuRef}
+          id={id}
           role="menu"
+          aria-labelledby={`${id}-trigger`}
           style={{ top: position.top, left: position.left }}
           className={classes(
-            "fixed z-[150] min-w-[160px] rounded-xl border border-ui-border bg-ui-bg-raised py-1 shadow-xl",
-            side === "top" && "-translate-y-full",
-            align === "end" && "-translate-x-full",
+            "fixed z-[150] min-w-[160px] max-w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto rounded-xl border border-ui-border bg-ui-bg-raised py-1 shadow-xl",
             className,
           )}
           onKeyDown={onMenuKeyDown}
@@ -637,15 +659,15 @@ export function DropdownMenu({ trigger, groups, side = "bottom", align = "start"
                   role="menuitem"
                   disabled={item.disabled}
                   className={classes(
-                    "flex w-full items-center gap-2 px-3 py-2 text-sm",
+                    "flex w-full items-center gap-2 break-words px-3 py-2 text-left text-sm",
                     item.disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-ui-bg-muted focus:bg-ui-bg-muted focus:outline-none",
                     item.danger && !item.disabled ? "text-ui-danger" : "text-ui-text",
                   )}
                   onClick={() => {
                     if (item.disabled) return;
-                    item.onClick?.();
                     setOpen(false);
                     triggerRef.current?.focus();
+                    item.onClick?.();
                   }}
                 >
                   {item.icon ? <span className="flex size-4 shrink-0 items-center" aria-hidden="true">{item.icon}</span> : null}

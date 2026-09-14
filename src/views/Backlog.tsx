@@ -6,6 +6,7 @@ import { useCallback, useMemo } from "react";
 import type { Board, LastChange, Task, Workflow } from "../api.ts";
 import { age, daysSince, isoDay } from "../components/relative.ts";
 import { StatusTag, Tag } from "../components/Tag.tsx";
+import { TaskActions } from "../components/TaskActions.tsx";
 import { priorityTone, statusTone } from "../components/tone.ts";
 import { rowData, type RowDragData } from "../dnd/data.ts";
 import { useAutoScroll, useReorderableRow, type Edge } from "../dnd/hooks.ts";
@@ -15,6 +16,8 @@ interface Props {
   readonly board: Board;
   readonly tasks: readonly Task[];
   readonly onSelectTask: (taskId: string) => void;
+  readonly onOpenGraph?: (taskId: string) => void;
+  readonly onShowInBacklog?: (taskId: string) => void;
   readonly onReorder: (task: Task, toLine: number) => void;
   /** Reordering is only meaningful when one epic's own table order is visible. */
   readonly reorderable: boolean;
@@ -62,12 +65,16 @@ function ReorderRow({
   workflow,
   projectLabel,
   onSelectTask,
+  onOpenGraph,
+  onShowInBacklog,
   onReorder,
 }: {
   task: Task;
   workflow: Workflow;
   projectLabel: string;
   onSelectTask: (taskId: string) => void;
+  onOpenGraph?: (taskId: string) => void;
+  onShowInBacklog?: (taskId: string) => void;
   onReorder: (task: Task, toLine: number) => void;
 }): JSX.Element {
   const canDrop = useCallback(
@@ -106,13 +113,18 @@ function ReorderRow({
         <GripVertical size={14} aria-hidden />
       </td>
       <td className="px-3 py-2">
-        <button
-          type="button"
-          className="mono whitespace-nowrap text-xs text-ui-accent hover:underline"
-          onClick={() => onSelectTask(task.id)}
-        >
-          {task.id}
-        </button>
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            className="mono whitespace-nowrap text-xs text-ui-accent hover:underline"
+            onClick={() => onSelectTask(task.id)}
+          >
+            {task.id}
+          </button>
+          <TaskActions taskId={task.id} onOpenDetails={() => onSelectTask(task.id)}
+            onOpenGraph={onOpenGraph && (() => onOpenGraph(task.id))}
+            onShowInBacklog={onShowInBacklog && (() => onShowInBacklog(task.id))} />
+        </div>
       </td>
       <td className="px-3 py-2">
         {task.priority ? (
@@ -136,6 +148,8 @@ export function Backlog({
   board,
   tasks,
   onSelectTask,
+  onOpenGraph,
+  onShowInBacklog,
   onReorder,
   reorderable,
   lastChanged,
@@ -181,13 +195,18 @@ export function Backlog({
         sortable: true,
         width: "13rem",
         render: (_value, row) => (
-          <button
-            type="button"
-            className="mono whitespace-nowrap text-xs text-ui-accent hover:underline"
-            onClick={() => onSelectTask(row.id)}
-          >
-            {row.id}
-          </button>
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              className="mono whitespace-nowrap text-xs text-ui-accent hover:underline"
+              onClick={() => onSelectTask(row.id)}
+            >
+              {row.id}
+            </button>
+            <TaskActions taskId={row.id} onOpenDetails={() => onSelectTask(row.id)}
+              onOpenGraph={onOpenGraph && (() => onOpenGraph(row.id))}
+              onShowInBacklog={onShowInBacklog && (() => onShowInBacklog(row.id))} />
+          </div>
         ),
       },
       {
@@ -280,7 +299,7 @@ export function Backlog({
         ),
       },
     ],
-    [board.workflow, onSelectTask],
+    [board.workflow, onSelectTask, onOpenGraph, onShowInBacklog],
   );
 
   return (
@@ -319,6 +338,8 @@ export function Backlog({
                   workflow={board.workflow}
                   projectLabel={labelOf(task.project)}
                   onSelectTask={onSelectTask}
+                  onOpenGraph={onOpenGraph}
+                  onShowInBacklog={onShowInBacklog}
                   onReorder={onReorder}
                 />
               ))}
