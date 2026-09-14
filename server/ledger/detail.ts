@@ -73,10 +73,10 @@ const TASK_PACKET_REQUIRED_LABELS = [
   "Acceptance criteria", "Verify", "Escalate, do not assume, if", "Handoff",
 ] as const;
 const QWEN3_CODER_NEXT_PACKET_MARKER_RE =
-  /^#{1,6}\s+Qwen3-Coder-Next(?:\s+(?:readiness|task))?\s+packet(?:\s+-\s+\S.*)?$/;
+  /^#{1,6}\s+(?:Qwen3-Coder-Next(?:\s+(?:readiness|task))?\s+packet(?:\s+-\s+\S.*)?|Qwen3\.8-Flash-Next packet)$/;
 const ANY_QWEN_PACKET_MARKER_RE =
-  /^#{1,6}\s+Qwen(?:3-Coder-Next)?(?:\s+(?:readiness|task))?\s+packet(?:\s+-\s+\S.*)?$/i;
-const ANY_QWEN_PACKET_FIELD_MARKER_RE = /^Qwen(?:3-Coder-Next)?(?:\s+(?:readiness|task))?\s+packet$/i;
+  /^#{1,6}\s+Qwen(?:3-Coder-Next|3\.8-Flash-Next)?(?:\s+(?:readiness|task))?\s+packet(?:\s+-\s+\S.*)?$/i;
+const ANY_QWEN_PACKET_FIELD_MARKER_RE = /^Qwen(?:3-Coder-Next|3\.8-Flash-Next)?(?:\s+(?:readiness|task))?\s+packet$/i;
 
 interface TaskPacketFieldRange {
   readonly start: number;
@@ -111,10 +111,10 @@ export function qwen3CoderNextPacketIsReady(block: DetailBlock): boolean {
   const genericMarkers = block.prose.filter((item) => ANY_QWEN_PACKET_MARKER_RE.test(item) &&
     !QWEN3_CODER_NEXT_PACKET_MARKER_RE.test(item)).length +
     block.fields.filter((field) => ANY_QWEN_PACKET_FIELD_MARKER_RE.test(field.rawLabel) &&
-      field.rawLabel !== "Qwen3-Coder-Next packet").length;
+      !QWEN3_CODER_NEXT_PACKET_MARKER_RE.test(`# ${field.rawLabel}`)).length;
   if (genericMarkers > 0) return false;
   const markerCount = block.prose.filter((item) => QWEN3_CODER_NEXT_PACKET_MARKER_RE.test(item)).length +
-    block.fields.filter((field) => field.rawLabel === "Qwen3-Coder-Next packet").length;
+    block.fields.filter((field) => QWEN3_CODER_NEXT_PACKET_MARKER_RE.test(`# ${field.rawLabel}`)).length;
   if (markerCount !== 1) return false;
   const ranges = taskPacketFieldRanges(block.fields);
   if (ranges.length !== 1) return false;
