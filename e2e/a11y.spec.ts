@@ -256,3 +256,52 @@ test("empty packet diagnostics leave no stale diagnostics and hostile labels sta
   expect(results.violations).toEqual([]);
   expect(dialogs).toEqual([]);
 });
+
+for (const width of [1280, 320]) {
+  test(`open task menus in Now, Board and Backlog have no WCAG 2.2 AA violations at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    for (const [view, radio] of [["now", "Now"], ["kanban", "Board"], ["backlog", "Backlog"]]) {
+      await page.goto(`/#view=${view}&project=moon-garden`);
+      await expect(page.getByRole("radio", { name: radio, exact: true })).toBeChecked();
+      const trigger = page.getByRole("button", { name: "Actions for MGA-002", exact: true });
+      await trigger.click();
+      const menu = page.getByRole("menu", { name: "Actions for MGA-002" });
+      await expect(menu.getByRole("menuitem").first()).toBeFocused();
+      const results = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
+      expect(results.violations, `${view}: ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
+  });
+}
+
+test("the rail project menu at 320px has no WCAG 2.2 AA violations", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "Open Signal Harbor in a view", exact: true });
+  await trigger.click();
+  const menu = page.getByRole("menu", { name: "Open Signal Harbor in a view" });
+  await expect(menu.getByRole("menuitem")).toHaveText(["Open roadmap", "Open board", "Open dependencies"]);
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  const results = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
+  expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
+test("held readiness chips and paused Roadmap filters have no WCAG 2.2 AA violations", async ({ page }) => {
+  for (const [view, radio] of [["kanban", "Board"], ["backlog", "Backlog"]]) {
+    await page.goto(`/#view=${view}&project=signal-harbor&readiness=waiting`);
+    await expect(page.getByRole("radio", { name: radio, exact: true })).toBeChecked();
+    await expect(page.getByRole("button", { name: "Remove readiness filter: waiting", exact: true })).toBeVisible();
+    const results = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
+    expect(results.violations, `${view}: ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
+  }
+  await page.goto("/#view=stories&project=moon-garden&q=MGA-002&status=Ready");
+  await expect(page.getByRole("radio", { name: "Roadmap", exact: true })).toBeChecked();
+  await expect(page.getByRole("region", { name: "Paused task filters" })).toContainText("MGA-002");
+  const results = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
+  expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+});
