@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import path from "node:path";
+
 import {
   agentQueryFailureSchema,
   agentQueryNameSchema,
@@ -8,6 +10,8 @@ import { runAgentQuery } from "../server/agent-query.ts";
 import { startBoardServer } from "../server/index.ts";
 import { validateRuntime } from "../server/ledger/write.ts";
 import { loadBoardRuntime, RuntimeConfigError } from "../server/runtime.ts";
+
+const packageRoot = path.resolve(import.meta.dirname, "..");
 
 interface ServerCliOptions {
   readonly command: "dev" | "start";
@@ -33,6 +37,8 @@ class ArgumentError extends Error {
 function usage(): string {
   return [
     "Usage:",
+    "  planops-board --help",
+    "  planops-board demo:init <destination>",
     "  planops-board dev --repo <path> [--config <repository-relative-path>] [--port <port>] [--allow-external-validator]",
     "  planops-board start --repo <path> [--config <repository-relative-path>] [--port <port>] [--allow-external-validator]",
     "  planops-board query startable --repo <path> [--config <repository-relative-path>] --json",
@@ -131,10 +137,30 @@ function parseArguments(argv: readonly string[]): CliOptions {
   throw new Error(usage());
 }
 
+async function initializeDemo(argv: readonly string[]): Promise<void> {
+  const destination = argv[0];
+  if (!destination || destination.startsWith("--") || argv.length > 1) {
+    throw new ArgumentError(`demo:init requires exactly one destination\n${usage()}`);
+  }
+  const demo: { createDemoRepository(destination: string): Promise<string> } =
+    // @ts-expect-error The shared demo initializer is plain JavaScript without type declarations.
+    await import("../scripts/create-demo-repository.mjs");
+  process.stdout.write(`${await demo.createDemoRepository(destination)}\n`);
+}
+
 async function main(argv: readonly string[]): Promise<void> {
+  if (argv[0] === "--help" && argv.length === 1) {
+    process.stdout.write(`${usage()}\n`);
+    return;
+  }
+  if (argv[0] === "demo:init") {
+    await initializeDemo(argv.slice(1));
+    return;
+  }
   const options = parseArguments(argv);
   const runtime = await loadBoardRuntime({
     repo: options.repo,
+    engineRoot: packageRoot,
     ...(options.config === undefined ? {} : { config: options.config }),
     ...(options.command === "query" || options.port === undefined ? {} : { port: options.port }),
     allowExternalValidator: options.command === "query" ? false : options.allowExternalValidator,
@@ -148,6 +174,7 @@ async function main(argv: readonly string[]): Promise<void> {
   await validateRuntime(runtime);
 
   if (options.command === "dev") {
+    process.chdir(packageRoot);
     const [{ createServer }, { createBoardViteConfig }] = await Promise.all([
       import("vite"),
       import("../vite.config.ts"),

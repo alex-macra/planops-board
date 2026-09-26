@@ -23,6 +23,25 @@ npm run dev -- --repo "$demo_dir/repo"
 Open `http://127.0.0.1:5176`. The demo initializer creates a disposable Git
 repository with fictional plans and commit history.
 
+## Install with npm
+
+The npm package ships a compiled `planops-board` command and the built UI.
+Install it into a project, or run it once with `npx`:
+
+```bash
+npm install planops-board
+npx planops-board --help
+
+demo_dir=$(mktemp -d)
+npx planops-board demo:init "$demo_dir/repo"
+npx planops-board dev --repo "$demo_dir/repo"
+npx planops-board start --repo "$demo_dir/repo"
+```
+
+`dev` serves the UI with live reload. `start` serves the prebuilt UI. Both bind
+only to `127.0.0.1`. Without a local install, `npx planops-board <command>`
+downloads the package first.
+
 ## Use your repository
 
 Pass any local Git repository with a PlanOps Board configuration:
@@ -59,7 +78,7 @@ Both app commands accept `--config <repository-relative-path>` and `--port <numb
 
 ## Agent queries
 
-The source CLI exposes three read-only JSON queries for local tools and agents:
+The CLI exposes three read-only JSON queries for local tools and agents:
 
 ```bash
 planops-board query startable --repo <path> --json
@@ -88,10 +107,18 @@ Do not expose the server to a network or open an untrusted repository.
 
 ```bash
 npm run verify
+npm run test:package
 npm run test:e2e -- --project=chromium
 npm run test:lighthouse
 npm audit --audit-level=high
 ```
+
+`npm run test:package` packs the package once, installs it into a temporary
+directory, and runs the installed `--help`, `demo:init`, `dev`, and `start`
+commands. It refuses to run unless npm uses empty or absent user and global
+config files and no registry credential variables are set. It prints each
+installed dependency install script with its resolved version, and fails when a
+dependency with an install script is not named in `package-lock.json`.
 
 Tests that write use disposable copies of the fictional demo. See
 [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
