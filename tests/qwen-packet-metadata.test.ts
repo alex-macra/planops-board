@@ -49,6 +49,11 @@ describe("packet compatibility fingerprints", () => {
     expect(dependencyFingerprint(task, new Map())).not.toBe(ready);
   });
 
+  it("binds the Qwen3.8 heading into packet identity", () => {
+    const flash = block(packet().replace("#### Qwen3-Coder-Next packet", "#### Qwen3.8-Flash-Next packet"));
+    expect(packetFingerprint(flash)).not.toBe(packetFingerprint(block()));
+  });
+
   it("fingerprints packet fields while leaving unrelated evidence outside the range", () => {
     expect(packetFingerprint(block(`${packet()}\n- **Evidence:** Earlier orbit observation.`))).toBe(packetFingerprint(block()));
     expect(packetFingerprint(block(packet().replace("total 350", "total 351")))).not.toBe(packetFingerprint(block()));
@@ -74,6 +79,14 @@ describe("structured packet metadata", () => {
     }, sizeException: null, splitTaskIds: [], files: [{ repository: "orbit", path: "src/orbit.ts", state: "existing",
       symbols: ["observe"], behavior: "record the orbit", writeBoundary: "observe only", proof: "orbit fixture" }], issues: [] });
     expect(taskPacketMetadata(block(packet().replace(loc, "  - Estimated changed LOC: production 300-350; tests 100-150; total 400-500"))).issues).toEqual([]);
+  });
+
+  it("reads the same metadata under the Qwen3.8 heading", () => {
+    const markdown = packet().replace("#### Qwen3-Coder-Next packet", "#### Qwen3.8-Flash-Next packet");
+    expect(markdown).toContain("#### Qwen3.8-Flash-Next packet");
+    const metadata = taskPacketMetadata(block(markdown));
+    expect(metadata).toEqual(taskPacketMetadata(block()));
+    expect(metadata).toMatchObject({ workKind: "implementation", issues: [] });
   });
 
   it.each(["verification", "research-docs", "owner-action", "external-hardware"] as const)("recognizes %s without inventing LOC", (kind) => {

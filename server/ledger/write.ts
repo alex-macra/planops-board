@@ -133,11 +133,13 @@ async function syncDirectory(directory: string): Promise<void> {
 }
 
 async function atomicWrite(
-  absolutePath: string,
+  root: string,
+  relativePath: string,
   text: string,
   mode: number,
   onReplaced: () => void = () => undefined,
 ): Promise<void> {
+  const absolutePath = await assertSafeRepositoryFile(root, relativePath);
   const directory = path.dirname(absolutePath);
   const temporaryPath = path.join(
     directory,
@@ -216,7 +218,7 @@ export async function applyWrite(
 
       let replacementOccurred = false;
       try {
-        await atomicWrite(absolutePath, updated, metadata.mode, () => {
+        await atomicWrite(runtime.repositoryRoot, request.file, updated, metadata.mode, () => {
           replacementOccurred = true;
         });
         await validateRuntime(runtime);
@@ -224,7 +226,7 @@ export async function applyWrite(
       } catch (error) {
         if (!replacementOccurred) throw error;
         try {
-          await atomicWrite(absolutePath, original, metadata.mode);
+          await atomicWrite(runtime.repositoryRoot, request.file, original, metadata.mode);
         } catch (rollbackError) {
           throw new AggregateError(
             [error, rollbackError],
