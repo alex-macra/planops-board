@@ -1273,6 +1273,7 @@ html.dark:has(.ux-portfolio) {
 }
 .paused-filter-chips > button > span { overflow-wrap: anywhere; min-width: 0; }
 .paused-filter-chips > button > svg { flex-shrink: 0; }
+.workspace-toolbar > .paused-filter-chips { margin-top: 0; }
 
 @media (min-width: 960px) {
   .ux-portfolio .portfolio-rail {

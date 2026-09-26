@@ -580,6 +580,14 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
             />
             Startable now
           </button>
+          {filters.readiness === "waiting" || filters.readiness === "needs-gate-check" ? (
+            <div className="paused-filter-chips">
+              <button type="button" className="focus-ring" aria-label={`Remove readiness filter: ${filters.readiness}`}
+                onClick={() => setQuery({ filters: { readiness: "" } })}>
+                <span>Readiness: {filters.readiness}</span><X size={12} aria-hidden />
+              </button>
+            </div>
+          ) : null}
           <FilterBar
             search={{
               value: filters.text,
