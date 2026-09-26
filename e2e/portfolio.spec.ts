@@ -102,3 +102,35 @@ test("project search opens a scoped view and recovers from an empty result on mo
   await expect(page.getByRole("button", { name: /^Signal Harbor \d+ tasks/ })).toHaveAttribute("aria-current", "true");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });
+
+test("dependency selection offers only the actions that leave the graph and explains a missing task", async ({ page }) => {
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/") && request.method() !== "GET") mutations.push(request.url());
+  });
+  const selection = page.getByRole("region", { name: "Selected dependency task" });
+
+  await page.goto("/#view=graph&project=moon-garden&focus=MGA-002");
+  await expect(selection).toContainText("MGA-002");
+  await expect(page.locator("svg").getByRole("button", { name: /^Actions for / })).toHaveCount(0);
+  const trigger = selection.getByRole("button", { name: "Actions for MGA-002", exact: true });
+  await trigger.click();
+  const menu = page.getByRole("menu", { name: "Actions for MGA-002" });
+  await expect(menu.getByRole("menuitem")).toHaveText(["Open task details", "Find in backlog"]);
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  await page.goto("/#view=now&project=moon-garden");
+  await page.getByRole("button", { name: "Actions for MGA-002", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Show dependencies" }).click();
+  await expect(page).toHaveURL(/#view=graph&focus=MGA-002$/);
+  await expect(selection).toContainText("MGA-002");
+
+  await page.goto("/#view=graph&focus=NOPE-999");
+  await expect(selection).toContainText("missing or has a duplicate ID");
+  await expect(selection.getByRole("button", { name: /^Actions for / })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Actions for / })).toHaveCount(0);
+  expect(mutations).toEqual([]);
+});
