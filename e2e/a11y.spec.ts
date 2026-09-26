@@ -76,6 +76,8 @@ test("the task drawer traps focus, closes with Escape, and returns focus", async
   await expect(dialog.getByRole("tab", { name: "Evidence" })).toHaveAttribute("aria-selected", "true");
   for (const name of ["Overview", "Implementation", "Dependencies", "Evidence"]) {
     await dialog.getByRole("tab", { name, exact: true }).click();
+    if (name === "Evidence") await expect(dialog.getByRole("region", { name: "Readiness states" })
+      .getByText("Dispatch audit: unavailable - readiness manifest missing", { exact: true })).toBeVisible();
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
     expect(results.violations, name).toEqual([]);
   }
