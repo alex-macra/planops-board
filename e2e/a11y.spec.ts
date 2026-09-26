@@ -291,6 +291,36 @@ test("the rail project menu at 320px has no WCAG 2.2 AA violations", async ({ pa
   await expect(trigger).toBeFocused();
 });
 
+test("the desktop rail project menu opens over the next row and its own targets meet WCAG 2.2 AA", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "Open Moon Garden in a view", exact: true });
+  const nextTrigger = page.getByRole("button", { name: "Open Signal Harbor in a view", exact: true });
+  await trigger.click();
+  const menu = page.getByRole("menu", { name: "Open Moon Garden in a view" });
+  const items = menu.getByRole("menuitem");
+  await expect(items).toHaveText(["Open roadmap", "Open board", "Open dependencies"]);
+  await expect(items.first()).toBeFocused();
+  const [triggerBox, nextBox, menuBox] = await Promise.all([trigger.boundingBox(), nextTrigger.boundingBox(), menu.boundingBox()]);
+  expect(menuBox!.y).toBeGreaterThan(triggerBox!.y + triggerBox!.height);
+  expect(menuBox!.y).toBeLessThan(nextBox!.y);
+  expect(menuBox!.y + menuBox!.height).toBeGreaterThan(nextBox!.y + nextBox!.height);
+  const centreHit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="menu"]')?.getAttribute("role") ?? null,
+    { x: nextBox!.x + nextBox!.width / 2, y: nextBox!.y + nextBox!.height / 2 });
+  expect(centreHit).toBe("menu");
+  for (let index = 0; index < 3; index += 1) {
+    const box = await items.nth(index).boundingBox();
+    expect(box?.width).toBeGreaterThanOrEqual(24);
+    expect(box?.height).toBeGreaterThanOrEqual(24);
+  }
+  const results = await new AxeBuilder({ page }).include('[role="menu"]').withTags(wcagTags).analyze();
+  expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+  expect(results.passes.find((pass) => pass.id === "target-size")?.nodes.length).toBe(3);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
 test("held readiness chips and paused Roadmap filters have no WCAG 2.2 AA violations", async ({ page }) => {
   for (const [view, radio] of [["kanban", "Board"], ["backlog", "Backlog"]]) {
     await page.goto(`/#view=${view}&project=signal-harbor&readiness=waiting`);
