@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 import { boardSchema } from "../shared/contracts.ts";
+import { expectNowHistoryLanded } from "./settle.ts";
 
 test("main views have no detectable WCAG 2.2 AA violations", async ({ page }) => {
   await page.goto("/");
@@ -263,6 +264,7 @@ for (const width of [1280, 320]) {
     for (const [view, radio] of [["now", "Now"], ["kanban", "Board"], ["backlog", "Backlog"]]) {
       await page.goto(`/#view=${view}&project=moon-garden`);
       await expect(page.getByRole("radio", { name: radio, exact: true })).toBeChecked();
+      if (view === "now") await expectNowHistoryLanded(page, "MGA-002");
       const trigger = page.getByRole("button", { name: "Actions for MGA-002", exact: true });
       await trigger.click();
       const menu = page.getByRole("menu", { name: "Actions for MGA-002" });

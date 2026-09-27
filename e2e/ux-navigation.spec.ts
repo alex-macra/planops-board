@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { boardSchema } from "../shared/contracts.ts";
 import { resetBrowserRepository } from "./fixture.ts";
+import { expectNowHistoryLanded } from "./settle.ts";
 
 test.setTimeout(90_000);
 
@@ -98,6 +99,7 @@ for (const view of ["now", "backlog", "kanban"] as const) {
     const mutations = recordMutations(page);
     const start = `/#view=${view}&project=moon-garden`;
     await page.goto(start);
+    if (view === "now") await expectNowHistoryLanded(page, "MGA-002");
     const trigger = page.getByRole("button", { name: "Actions for MGA-002", exact: true });
     const menu = page.getByRole("menu", { name: "Actions for MGA-002" });
     const taskItems = menu.getByRole("group", { name: "MGA-002", exact: true }).getByRole("menuitem");

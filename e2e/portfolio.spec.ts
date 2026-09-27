@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { resetBrowserRepository } from "./fixture.ts";
+import { expectNowHistoryLanded } from "./settle.ts";
 
 test.beforeEach(async () => {
   await resetBrowserRepository();
@@ -123,6 +124,7 @@ test("dependency selection offers only the actions that leave the graph and expl
   await expect(trigger).toBeFocused();
 
   await page.goto("/#view=now&project=moon-garden");
+  await expectNowHistoryLanded(page, "MGA-002");
   await page.getByRole("button", { name: "Actions for MGA-002", exact: true }).click();
   await page.getByRole("menuitem", { name: "Show dependencies" }).click();
   await expect(page).toHaveURL(/#view=graph&focus=MGA-002$/);
