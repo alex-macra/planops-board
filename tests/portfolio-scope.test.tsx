@@ -17,16 +17,15 @@ function task(id: string, partial: Partial<Task> = {}): Task {
     workKind: null, estimatedChangedLoc: null, sizeException: null, readinessCheckedAt: null, executionBlockers: [], ...partial };
 }
 
-function fixture(): Board {
+function fixture(tasks: readonly Task[] = [
+  task("ORB-001", { repositories: ["telescope"] }),
+  task("ORB-002", { readiness: "waiting" }),
+  task("ORB-003", { readiness: "needs-gate-check", priority: "P2" }),
+  task("SUN-001", { file: "plans/sun.md", epic: "Sun", project: "sun", projects: ["sun"], priority: "P2", status: "Blocked", statusBase: "Blocked", readiness: null, repositories: ["telescope"] }),
+]): Board {
   return { generatedAt: "2026-08-20T12:00:00Z", revision: "a".repeat(64), planRevision: "a".repeat(64), workflow: DEFAULT_WORKFLOW,
     qwenReadiness: { status: "missing", schemaVersion: null, auditBaseCommit: null, capturedAt: null, candidateCount: 0, manifestSha256: null, error: null },
-    tasks: [
-      task("ORB-001"),
-      task("ORB-002", { readiness: "waiting" }),
-      task("ORB-003", { readiness: "needs-gate-check", priority: "P2" }),
-      task("SUN-001", { file: "plans/sun.md", epic: "Sun", project: "sun", projects: ["sun"], priority: "P2", status: "Blocked", statusBase: "Blocked", readiness: null }),
-    ],
-    stories: [],
+    tasks: [...tasks], stories: [],
     documents: ["plans/moon.md", "plans/sun.md"].map((path) => ({ path, title: "Fictional sky", writable: true, sha256: "a".repeat(64), taskCount: 2,
       vocabulary: { bases: DEFAULT_WORKFLOW.statusOrder, source: "configured" } })),
     projects: ["orbit", "sun"].map((id) => ({ id, label: id === "orbit" ? "Observatory" : "Solar", scope: "product", primaryCount: 2, taskCount: 2, parked: null })),
@@ -43,14 +42,17 @@ const writes = {
 
 let originalUrl: string, originalStorage: string | null, fetchSpy: ReturnType<typeof vi.spyOn>;
 
+function transport(board: Board = fixture()) {
+  vi.spyOn(api, "fetchSession").mockResolvedValue({ sourceRef: "fictional", sourceSha: "a".repeat(40), builtAt: "2026-08-20T12:00:00Z",
+    capabilities: { history: false, liveEvents: false, localWrites: false } });
+  vi.spyOn(state, "useBoard").mockReturnValue({ board, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null,
+    writing: false, lastChanged: {}, live: "unsupported", behind: false, refreshedAt: null, checkedAt: null, reload: async () => true,
+    ...writes, clearTouched: () => {} });
+}
+
 beforeEach(() => {
   originalUrl = window.location.href; originalStorage = localStorage.getItem("projects-board.dark-mode");
   localStorage.setItem("projects-board.dark-mode", "false");
-  vi.spyOn(api, "fetchSession").mockResolvedValue({ sourceRef: "fictional", sourceSha: "a".repeat(40), builtAt: "2026-08-20T12:00:00Z",
-    capabilities: { history: false, liveEvents: false, localWrites: false } });
-  vi.spyOn(state, "useBoard").mockReturnValue({ board: fixture(), git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null,
-    writing: false, lastChanged: {}, live: "unsupported", behind: false, refreshedAt: null, checkedAt: null, reload: async () => true,
-    ...writes, clearTouched: () => {} });
   fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no network in this test"));
 });
 
@@ -62,14 +64,22 @@ afterEach(() => {
   if (originalStorage === null) localStorage.removeItem("projects-board.dark-mode"); else localStorage.setItem("projects-board.dark-mode", originalStorage);
 });
 
-function open(hash: string) {
+function open(hash: string, board?: Board) {
   window.history.replaceState(null, "", `/${hash}`);
+  transport(board);
   return render(<App />);
 }
 const params = () => new URLSearchParams(window.location.hash.slice(1));
 const pausedRegion = () => screen.queryByRole("region", { name: "Paused task filters" });
 const searchBox = () => screen.getByPlaceholderText(/Search ID/);
 const VIEWS = [["now", "Now"], ["stories", "Roadmap"], ["rollup", "Rollup"], ["kanban", "Board"], ["backlog", "Backlog"], ["graph", "Dependencies"]] as const;
+async function openRollupCard(name: string) {
+  const card = await screen.findByRole("button", { name });
+  const disclosure = card.closest("details")!;
+  fireEvent.click(disclosure.querySelector("summary")!);
+  expect(disclosure).toHaveAttribute("open");
+  fireEvent.click(card);
+}
 
 describe("project scope and held filters", () => {
   it.each(VIEWS)("resets every row filter and the grouping when the rail selects a project from %s", async (view) => {
@@ -224,15 +234,47 @@ describe("project change from composed views and the rail menu", () => {
 
   it("clears project scope and other filters when a Rollup epic card opens that ledger's board", async () => {
     open("#view=rollup&project=orbit&q=ORB&priority=P1");
-    const card = await screen.findByRole("button", { name: "Fictional sky" });
-    const disclosure = card.closest("details")!;
-    fireEvent.click(disclosure.querySelector("summary")!);
-    expect(disclosure).toHaveAttribute("open");
-    fireEvent.click(card);
+    await openRollupCard("Fictional sky");
     expect(window.location.hash).toBe("#view=kanban&epic=plans%2Fmoon.md");
     expect(screen.getByRole("heading", { level: 2, name: "All projects" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Epic" })).toHaveValue("plans/moon.md");
     expect(searchBox()).toHaveValue("");
+  });
+
+  it("clears project scope and row filters but keeps the grouping when a Rollup repository card opens that repository's board", async () => {
+    open(`#view=rollup&project=orbit&${HELD}`);
+    expect(await screen.findByRole("region", { name: "Paused task filters" })).toHaveTextContent("Repository: lab");
+    await openRollupCard("telescope");
+    expect(window.location.hash).toBe("#view=kanban&group=epic&repo=telescope");
+    expect(screen.getByRole("radio", { name: "Board" })).toBeChecked();
+    expect(screen.getByRole("heading", { level: 2, name: "All projects" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /All projects.*tasks/ })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("combobox", { name: "Repository" })).toHaveValue("telescope");
+    expect(screen.getByRole("combobox", { name: "Group by" })).toHaveValue("epic");
+    expect(searchBox()).toHaveValue("");
+    for (const name of ["Epic", "Priority", "Status"]) expect(screen.getByRole("combobox", { name })).toHaveValue("");
+    expect(screen.getByRole("switch", { name: "Startable now" })).toHaveAttribute("aria-checked", "false");
+    expect(pausedRegion()).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Remove .* filter/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Open ORB-001: / })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Open SUN-001: / })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Open ORB-002: / })).not.toBeInTheDocument();
+  });
+
+  it("restores the previous scope and paused filters on browser Back after a Rollup repository card", async () => {
+    open("#view=rollup&project=orbit&q=ORB&priority=P1");
+    const before = window.location.hash;
+    expect(await screen.findByRole("region", { name: "Paused task filters" })).toHaveTextContent("Search: ORB");
+    await openRollupCard("telescope");
+    expect(window.location.hash).toBe("#view=kanban&repo=telescope");
+    expect(pausedRegion()).not.toBeInTheDocument();
+    window.history.back();
+    await waitFor(() => expect(window.location.hash).toBe(before));
+    await waitFor(() => expect(pausedRegion()).toHaveTextContent("Search: ORB"));
+    expect(pausedRegion()).toHaveTextContent("Priority: P1");
+    expect(screen.getByRole("radio", { name: "Rollup" })).toBeChecked();
+    expect(screen.getByRole("heading", { level: 2, name: "Observatory" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Observatory.*tasks/ })).toHaveAttribute("aria-current", "true");
   });
 
   it.each(MENU_ROUTES)("restores the default grouping, filters and closed panels when the project-row menu chooses %s", async (item, target, radio) => {
@@ -287,5 +329,22 @@ describe("URL text in scope and filter chips", () => {
     open(`#view=now&readiness=${encodeURIComponent(hostile)}`);
     await screen.findByRole("heading", { level: 2, name: "All projects" });
     expect(pausedRegion()).not.toBeInTheDocument();
+  });
+
+  it("renders a hostile repository name as literal card and chip text", async () => {
+    open("#view=rollup", fixture([task("ORB-001", { repositories: [hostile] })]));
+    const card = await screen.findByRole("button", { name: hostile });
+    expect(card).toHaveTextContent(hostile);
+    expect(card.innerHTML).toContain("&lt;script&gt;");
+    await openRollupCard(hostile);
+    expect(params().get("repo")).toBe(hostile);
+    expect([...params().keys()]).toEqual(["view", "repo"]);
+    expect(screen.getByRole("combobox", { name: "Repository" })).toHaveValue(hostile);
+    expect(screen.getByRole("button", { name: /^Open ORB-001: / })).toHaveTextContent(hostile);
+    fireEvent.click(screen.getByRole("radio", { name: "Rollup" }));
+    const paused = await screen.findByRole("region", { name: "Paused task filters" });
+    expect(within(paused).getByRole("button", { name: `Remove repository filter: ${hostile}` })).toHaveTextContent(`Repository: ${hostile}`);
+    expect(paused.innerHTML).toContain("&lt;script&gt;");
+    expect(document.querySelectorAll("script, iframe")).toHaveLength(0);
   });
 });
