@@ -1,5 +1,5 @@
-import type { JSX } from "react";
-import { useMemo } from "react";
+import type { JSX, RefObject } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { Board, LastChange, Task, Workflow } from "../api.ts";
 import { Pill } from "../components/Pill.tsx";
@@ -17,12 +17,40 @@ interface Props {
   readonly onShowInBacklog?: (taskId: string) => void;
 }
 
-type TaskNavigation = Pick<Props, "onSelectTask" | "onOpenGraph" | "onShowInBacklog">;
+interface FocusCarry {
+  readonly taskId: string;
+  readonly index: number;
+}
 
-function Row({ row, workflow, onSelectTask, onOpenGraph, onShowInBacklog }: { row: NowRow; workflow: Workflow } & TaskNavigation): JSX.Element {
+type SharedRowProps = Pick<Props, "onSelectTask" | "onOpenGraph" | "onShowInBacklog"> & {
+  readonly lastChanged: Readonly<Record<string, LastChange>>;
+  readonly carry: RefObject<FocusCarry | null>;
+  readonly onMenuOpenChange: (taskId: string, change: LastChange | undefined, open: boolean) => void;
+};
+
+function Row({ row, workflow, lastChanged, carry, onMenuOpenChange, onSelectTask, onOpenGraph, onShowInBacklog }: { row: NowRow; workflow: Workflow } & SharedRowProps): JSX.Element {
   const { task } = row;
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const pending = carry.current;
+    if (pending?.taskId === task.id && (document.activeElement === null || document.activeElement === document.body)) {
+      const tail = element.closest("details");
+      if (tail) tail.open = true;
+      element.querySelectorAll("button")[pending.index]?.focus();
+    }
+    // Layout cleanup runs while the old row is still in the DOM, so a row that
+    // regroups can see its own focus and hand it to its remount.
+    return () => {
+      const index = [...element.querySelectorAll("button")].findIndex((button) => button === document.activeElement);
+      if (index >= 0) carry.current = { taskId: task.id, index };
+    };
+  }, [carry, task.id]);
+
   return (
-    <div className="now-task-row">
+    <div ref={ref} className="now-task-row">
       <button type="button" className="now-row focus-ring" onClick={() => onSelectTask(task.id)}>
         <span className="now-row-id">{task.id}</span>
         <span className={`now-row-priority ${task.priority === workflow.priorityOrder[0] ? "text-[rgb(var(--tone-blocked))]" : ""}`}>
@@ -36,7 +64,8 @@ function Row({ row, workflow, onSelectTask, onOpenGraph, onShowInBacklog }: { ro
       </button>
       <TaskActions taskId={task.id} onOpenDetails={() => onSelectTask(task.id)}
         onOpenGraph={onOpenGraph && (() => onOpenGraph(task.id))}
-        onShowInBacklog={onShowInBacklog && (() => onShowInBacklog(task.id))} />
+        onShowInBacklog={onShowInBacklog && (() => onShowInBacklog(task.id))}
+        onMenuOpenChange={(open) => onMenuOpenChange(task.id, lastChanged[task.id], open)} />
     </div>
   );
 }
@@ -51,13 +80,11 @@ const VISIBLE = 12;
 function Group({
   group,
   workflow,
-  onSelectTask,
-  onOpenGraph,
-  onShowInBacklog,
+  ...navigation
 }: {
   group: NowGroup;
   workflow: Workflow;
-} & TaskNavigation): JSX.Element {
+} & SharedRowProps): JSX.Element {
   const head = group.rows.slice(0, VISIBLE);
   const tail = group.rows.slice(VISIBLE);
   return (
@@ -69,7 +96,7 @@ function Group({
       </div>
       <div>
         {head.map((row) => (
-          <Row key={row.task.id} row={row} workflow={workflow} onSelectTask={onSelectTask} onOpenGraph={onOpenGraph} onShowInBacklog={onShowInBacklog} />
+          <Row key={row.task.id} row={row} workflow={workflow} {...navigation} />
         ))}
       </div>
       {tail.length > 0 ? (
@@ -79,7 +106,7 @@ function Group({
           </summary>
           <div>
             {tail.map((row) => (
-              <Row key={row.task.id} row={row} workflow={workflow} onSelectTask={onSelectTask} onOpenGraph={onOpenGraph} onShowInBacklog={onShowInBacklog} />
+              <Row key={row.task.id} row={row} workflow={workflow} {...navigation} />
             ))}
           </div>
         </details>
@@ -97,7 +124,31 @@ export function Now({
   onOpenGraph,
   onShowInBacklog,
 }: Props): JSX.Element {
-  const now = useMemo(() => buildNow(board, tasks, lastChanged), [board, tasks, lastChanged]);
+  const [held, setHeld] = useState<ReadonlyMap<string, LastChange | undefined>>(new Map());
+  const carry = useRef<FocusCarry | null>(null);
+  const shown = useMemo(() => {
+    if ([...held].every(([taskId, change]) => lastChanged[taskId] === change)) return lastChanged;
+    const next: Record<string, LastChange> = { ...lastChanged };
+    for (const [taskId, change] of held) {
+      if (change) next[taskId] = change;
+      else delete next[taskId];
+    }
+    return next;
+  }, [lastChanged, held]);
+  const now = useMemo(() => buildNow(board, tasks, shown), [board, tasks, shown]);
+  const onMenuOpenChange = useCallback((taskId: string, change: LastChange | undefined, open: boolean) => {
+    setHeld((current) => {
+      if (open === current.has(taskId)) return current;
+      const next = new Map(current);
+      if (open) next.set(taskId, change);
+      else next.delete(taskId);
+      return next;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    carry.current = null;
+  });
 
   return (
     <div className="space-y-4">
@@ -112,7 +163,8 @@ export function Now({
       </div>
 
       {now.groups.map((group) => (
-        <Group key={group.id} group={group} workflow={board.workflow} onSelectTask={onSelectTask} onOpenGraph={onOpenGraph} onShowInBacklog={onShowInBacklog} />
+        <Group key={group.id} group={group} workflow={board.workflow} lastChanged={shown} carry={carry} onMenuOpenChange={onMenuOpenChange}
+          onSelectTask={onSelectTask} onOpenGraph={onOpenGraph} onShowInBacklog={onShowInBacklog} />
       ))}
 
       {now.groups.length === 0 ? (

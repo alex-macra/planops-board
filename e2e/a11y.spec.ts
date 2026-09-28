@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 
 import { boardSchema } from "../shared/contracts.ts";
 import { expectNowHistoryLanded } from "./settle.ts";
@@ -274,6 +274,115 @@ for (const width of [1280, 320]) {
       await page.keyboard.press("Escape");
       await expect(menu).toHaveCount(0);
       await expect(trigger).toBeFocused();
+    }
+  });
+}
+
+for (const width of [1280, 320]) {
+  test.describe(`late Now history at ${width}px`, () => {
+    async function holdHistory(page: Page, olderRows = 0): Promise<() => Promise<Response>> {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      const ids = Array.from({ length: olderRows }, (_, index) => `MGA-${101 + index}`);
+      if (olderRows > 0) {
+        await page.route("**/api/board", async (route) => {
+          const response = await route.fetch(), board = boardSchema.parse(await response.json());
+          const source = board.tasks.find((task) => task.id === "MGA-003")!;
+          const json = boardSchema.parse({ ...board, tasks: [...board.tasks,
+            ...ids.map((id, index) => ({ ...source, id, title: `Water lunar fern bed ${index + 1}` }))] });
+          await route.fulfill({ response, json });
+        });
+      }
+      await page.route("**/api/history/summary", async (route) => {
+        await released;
+        if (olderRows === 0) return route.continue();
+        const response = await route.fetch(), history = await response.json() as Record<string, unknown>;
+        const older = { date: "2020-01-01T00:00:00Z", sha: null, subject: "Fictional fern survey" };
+        await route.fulfill({ response, json: { ...history, ...Object.fromEntries(ids.map((id) => [id, older])) } });
+      });
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto("/#view=now&project=moon-garden");
+      await expect(page.getByText("Reading git for the stale group…", { exact: true })).toBeVisible();
+      await expect(nowGroup(page, "Pick one up").getByRole("button", { name: "Actions for MGA-002", exact: true })).toBeVisible();
+      return () => {
+        const landed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/history/summary");
+        release();
+        return landed;
+      };
+    }
+    const nowGroup = (page: Page, label: string) =>
+      page.locator("section", { has: page.getByRole("heading", { level: 2, name: label, exact: true }) });
+    const bodyFocused = (page: Page) => page.evaluate(() => document.activeElement === document.body);
+
+    test("an open task menu survives the history landing and focus follows the row", async ({ page }) => {
+      const releaseHistory = await holdHistory(page);
+      const trigger = page.getByRole("button", { name: "Actions for MGA-002", exact: true });
+      const menu = page.getByRole("menu", { name: "Actions for MGA-002" });
+      await trigger.click();
+      await expect(menu.getByRole("menuitem").first()).toBeFocused();
+      expect((await releaseHistory()).status()).toBe(200);
+      await expect(page.getByText("Reading git for the stale group…", { exact: true })).toHaveCount(0);
+      await expect(menu).toBeVisible();
+      await expect(menu.getByRole("menuitem", { name: "Open task details" })).toBeFocused();
+      await expect(nowGroup(page, "Pick one up").getByRole("button", { name: "Actions for MGA-002", exact: true })).toBeVisible();
+      const [triggerBox, menuBox] = await Promise.all([trigger.boundingBox(), menu.boundingBox()]);
+      expect(Math.min(Math.abs(menuBox!.y - (triggerBox!.y + triggerBox!.height)), Math.abs(menuBox!.y + menuBox!.height - triggerBox!.y))).toBeLessThanOrEqual(8);
+      await page.keyboard.press("ArrowDown");
+      await expect(menu.getByRole("menuitem", { name: "Show dependencies" })).toBeFocused();
+      expect(await bodyFocused(page)).toBe(false);
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+      await expect(nowGroup(page, "Going stale").getByRole("button", { name: "Actions for MGA-002", exact: true })).toBeVisible();
+      await expect(nowGroup(page, "Pick one up").getByRole("button", { name: "Actions for MGA-002", exact: true })).toHaveCount(0);
+      await expectNowHistoryLanded(page, "MGA-002");
+      await expect(trigger).toBeFocused();
+      expect(await bodyFocused(page)).toBe(false);
+      const results = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
+      expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+    });
+
+    test("keyboard focus on a task trigger follows the row into its new group", async ({ page }) => {
+      const releaseHistory = await holdHistory(page);
+      const trigger = page.getByRole("button", { name: "Actions for MGA-002", exact: true });
+      await trigger.focus();
+      await expect(trigger).toBeFocused();
+      expect((await releaseHistory()).status()).toBe(200);
+      await expect(nowGroup(page, "Going stale").getByRole("button", { name: "Actions for MGA-002", exact: true })).toBeVisible();
+      await expectNowHistoryLanded(page, "MGA-002");
+      await expect(trigger).toBeFocused();
+      expect(await bodyFocused(page)).toBe(false);
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("menu", { name: "Actions for MGA-002" }).getByRole("menuitem").first()).toBeFocused();
+    });
+
+    for (const path of ["trigger focus", "a held menu closing"] as const) {
+      test(`${path} opens the collapsed tail the row lands in and keeps focus on its trigger`, async ({ page }) => {
+        const releaseHistory = await holdHistory(page, 13);
+        const trigger = page.getByRole("button", { name: "Actions for MGA-002", exact: true });
+        const menu = page.getByRole("menu", { name: "Actions for MGA-002" });
+        const tail = nowGroup(page, "Going stale").locator("details");
+        if (path === "trigger focus") {
+          await trigger.focus();
+          await expect(trigger).toBeFocused();
+          expect((await releaseHistory()).status()).toBe(200);
+        } else {
+          await trigger.click();
+          await expect(menu.getByRole("menuitem").first()).toBeFocused();
+          expect((await releaseHistory()).status()).toBe(200);
+          await expect(page.getByText("Reading git for the stale group…", { exact: true })).toHaveCount(0);
+          await expect(menu.getByRole("menuitem").first()).toBeFocused();
+          await expect(tail).not.toHaveAttribute("open");
+          await page.keyboard.press("Escape");
+          await expect(menu).toHaveCount(0);
+        }
+        await expect(tail.getByRole("button", { name: "Actions for MGA-002", exact: true, includeHidden: true })).toBeAttached();
+        await expect(tail).toHaveAttribute("open", "");
+        await expect(tail.locator(":scope > summary")).toHaveText(/^Show \d+ more$/);
+        await expect(trigger).toBeFocused();
+        expect(await bodyFocused(page)).toBe(false);
+        await page.keyboard.press("Enter");
+        await expect(menu.getByRole("menuitem").first()).toBeFocused();
+      });
     }
   });
 }

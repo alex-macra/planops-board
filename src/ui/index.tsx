@@ -522,11 +522,14 @@ export interface DropdownMenuProps {
   readonly side?: "bottom" | "top";
   readonly align?: "start" | "end";
   readonly className?: string;
+  readonly onOpenChange?: (open: boolean) => void;
 }
 
-export function DropdownMenu({ trigger, triggerLabel, groups, side = "bottom", align = "start", className }: DropdownMenuProps): JSX.Element {
+export function DropdownMenu({ trigger, triggerLabel, groups, side = "bottom", align = "start", className, onOpenChange }: DropdownMenuProps): JSX.Element {
   const id = useId();
   const [open, setOpen] = useState(false);
+  const openChangeRef = useRef(onOpenChange);
+  openChangeRef.current = onOpenChange;
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -545,10 +548,11 @@ export function DropdownMenu({ trigger, triggerLabel, groups, side = "bottom", a
     let top = side === "bottom" ? below : above;
     if (side === "bottom" && below + height > viewportHeight - 8 && above >= 8) top = above;
     if (side === "top" && above < 8 && below + height <= viewportHeight - 8) top = below;
-    setPosition({
+    const next = {
       top: Math.max(8, Math.min(top, viewportHeight - height - 8)),
       left: Math.max(8, Math.min(align === "start" ? bounds.left : bounds.right - width, viewportWidth - width - 8)),
-    });
+    };
+    setPosition((current) => current.top === next.top && current.left === next.left ? current : next);
   }, [align, side]);
 
   const openMenu = useCallback((focus: "first" | "last" = "first") => {
@@ -562,7 +566,13 @@ export function DropdownMenu({ trigger, triggerLabel, groups, side = "bottom", a
 
   useLayoutEffect(() => {
     if (open) updatePosition();
-  }, [open, updatePosition]);
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    openChangeRef.current?.(true);
+    return () => openChangeRef.current?.(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

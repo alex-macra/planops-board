@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { DEFAULT_WORKFLOW } from "../shared/config.ts";
 import * as api from "../src/api.ts";
 import * as state from "../src/state.ts";
-import type { Board, Task } from "../src/api.ts";
+import type { Board, LastChange, Task } from "../src/api.ts";
 import { App } from "../src/App.tsx";
 
 function task(id: string, partial: Partial<Task> = {}): Task {
@@ -37,11 +37,11 @@ const writes = {
 
 let originalUrl: string, originalStorage: string | null, fetchSpy: MockInstance<typeof fetch>;
 
-function transport(board: Board = fixture(), localWrites = false) {
+function transport(board: Board = fixture(), localWrites = false, lastChanged: Readonly<Record<string, LastChange>> = {}) {
   vi.spyOn(api, "fetchSession").mockResolvedValue({ sourceRef: "fictional", sourceSha: "a".repeat(40), builtAt: "2026-08-20T12:00:00Z",
     capabilities: { history: false, liveEvents: false, localWrites } });
   vi.spyOn(state, "useBoard").mockReturnValue({ board, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null,
-    writing: false, lastChanged: {}, live: "unsupported", behind: false, refreshedAt: null, checkedAt: null, reload: async () => true,
+    writing: false, lastChanged, live: "unsupported", behind: false, refreshedAt: null, checkedAt: null, reload: async () => true,
     ...writes, clearTouched: () => {} });
 }
 
@@ -189,5 +189,72 @@ describe("find in backlog scope", () => {
     expect(params().has("project")).toBe(false);
     expect(screen.getByPlaceholderText(/Search ID/)).toHaveValue("ORB-009");
     expect(screen.getByRole("button", { name: /All projects.*tasks/ })).toHaveAttribute("aria-current", "true");
+  });
+});
+
+describe("history landing late in now", () => {
+  const board = fixture();
+  const history = { "ORB-001": { date: "2026-01-01T00:00:00Z", sha: null, subject: "Fictional survey" },
+    "ORB-002": { date: new Date().toISOString(), sha: null, subject: "Fictional survey" } };
+  const group = (label: string) => screen.getByRole("heading", { level: 2, name: label }).closest("section")!;
+  const land = (view: ReturnType<typeof open>) => { transport(board, false, history); view.rerender(<App />); };
+
+  it("keeps an open task menu and its focus, then moves the row and its trigger focus once the menu closes", async () => {
+    const view = open("#view=now&project=orbit", board);
+    const { menu } = await openMenu("ORB-001");
+    const first = within(menu).getAllByRole("menuitem")[0]!;
+    await waitFor(() => expect(first).toHaveFocus());
+    land(view);
+    expect(screen.queryByText("Reading git for the stale group…")).not.toBeInTheDocument();
+    expect(menu).toBeInTheDocument();
+    expect(first).toHaveFocus();
+    expect(within(group("Pick one up")).getByRole("button", { name: "Actions for ORB-001" })).toBeInTheDocument();
+    fireEvent.keyDown(first, { key: "Escape" });
+    expect(menu).not.toBeInTheDocument();
+    expect(within(group("Pick one up")).queryByRole("button", { name: "Actions for ORB-001" })).not.toBeInTheDocument();
+    expect(within(group("Going stale")).getByRole("button", { name: "Actions for ORB-001" })).toHaveFocus();
+  });
+
+  it("opens the collapsed tail a focused row lands in", async () => {
+    const older = Array.from({ length: 13 }, (_, index) => `ORB-${101 + index}`);
+    const crowded = fixture([task("ORB-001"), ...older.map((id) => task(id))]);
+    const view = open("#view=now&project=orbit", crowded);
+    (await screen.findByRole("button", { name: "Actions for ORB-001" })).focus();
+    transport(crowded, false, { ...history, ...Object.fromEntries(older.map((id) => [id, { date: "2020-01-01T00:00:00Z", sha: null, subject: "Fictional fern survey" }])) });
+    view.rerender(<App />);
+    const tail = group("Going stale").querySelector("details")!;
+    expect(tail).toHaveAttribute("open");
+    expect(within(tail).getByRole("button", { name: "Actions for ORB-001" })).toHaveFocus();
+    expect(screen.getAllByRole("button", { name: "Actions for ORB-001" })).toHaveLength(1);
+  });
+
+  it("holds every row whose menu is open, even when a second menu opens without a pointer", async () => {
+    const both = { ...history, "ORB-002": history["ORB-001"], "SUN-001": history["ORB-002"] };
+    const view = open("#view=now&project=orbit", board);
+    const first = await openMenu("ORB-001");
+    const second = await openMenu("ORB-002");
+    expect(first.menu).toBeInTheDocument();
+    transport(board, false, both);
+    view.rerender(<App />);
+    expect(screen.queryByText("Reading git for the stale group…")).not.toBeInTheDocument();
+    expect(first.menu).toBeInTheDocument();
+    expect(second.menu).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Going stale" })).not.toBeInTheDocument();
+    fireEvent.keyDown(within(second.menu).getAllByRole("menuitem")[0]!, { key: "Escape" });
+    expect(second.menu).not.toBeInTheDocument();
+    expect(within(group("Going stale")).getByRole("button", { name: "Actions for ORB-002" })).toHaveFocus();
+    expect(within(group("Pick one up")).getByRole("button", { name: "Actions for ORB-001" })).toBeInTheDocument();
+    expect(first.menu).toBeInTheDocument();
+    fireEvent.keyDown(within(first.menu).getAllByRole("menuitem")[0]!, { key: "Escape" });
+    expect(first.menu).not.toBeInTheDocument();
+    expect(within(group("Going stale")).getByRole("button", { name: "Actions for ORB-001" })).toHaveFocus();
+  });
+
+  it.each([["task trigger", "Actions for ORB-001"], ["row", /^ORB-001/]] as const)("carries focus on the %s into the row's new group", async (_, name) => {
+    const view = open("#view=now&project=orbit", board);
+    (await screen.findByRole("button", { name })).focus();
+    land(view);
+    expect(within(group("Going stale")).getByRole("button", { name })).toHaveFocus();
+    expect(document.body).not.toHaveFocus();
   });
 });
