@@ -178,6 +178,24 @@ describe("Qwen task subjects", () => {
     } finally { load.mockRestore(); }
   });
 
+  it("projects a Qwen3.8 packet as ready without repository I/O", () => {
+    const load = vi.spyOn(readinessSource, "loadQwenReadinessSource").mockImplementation(() => {
+      throw new Error("Repository I/O is forbidden during subject construction");
+    });
+    try {
+      const flash = packet().replace("#### Qwen3-Coder-Next packet", "#### Qwen3.8-Flash-Next packet");
+      const task = build([source([row()], story() + flash)]).tasks[0]!;
+      expect(task).toMatchObject({ qwen3CoderNextReady: true, readiness: "startable", packetMetadata: { issues: [] } });
+      expect(load).not.toHaveBeenCalled();
+    } finally { load.mockRestore(); }
+  });
+
+  it("refuses a packet carrying both Qwen3.8 and legacy headings", () => {
+    const mixed = packet().replace("#### Qwen3-Coder-Next packet", "#### Qwen3.8-Flash-Next packet\n\n#### Qwen3-Coder-Next packet");
+    expect(build([source([row()], story() + mixed)]).tasks[0]).toMatchObject({
+      title: "Observe the orbit", storyId: "ORB-S01", qwen3CoderNextReady: false });
+  });
+
   it("transports both new diagnostics with additive subject and assessment fields", () => {
     const board = build([source([row()]), source([], story("EXT-S01"), "plans/other.md")]);
     const response = toBoardResponse(board);

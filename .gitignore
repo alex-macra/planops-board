@@ -10,3 +10,4 @@ playwright-report/
 *.tmp
 *.log
 .DS_Store
+bin/

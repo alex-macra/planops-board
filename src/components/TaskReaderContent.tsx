@@ -13,6 +13,7 @@ interface TaskReaderContentProps {
   readonly fields: readonly DetailField[];
   readonly packetMetadata: Task["packetMetadata"];
   readonly renderField: (field: DetailField) => ReactNode;
+  readonly evidenceLead?: ReactNode;
   readonly children: ReactNode;
 }
 
@@ -65,7 +66,7 @@ function ImplementationSummary({ metadata }: { readonly metadata: Task["packetMe
   </section>;
 }
 
-export function TaskReaderContent({ active, onChange, identity, fields, packetMetadata, renderField, children }: TaskReaderContentProps): JSX.Element {
+export function TaskReaderContent({ active, onChange, identity, fields, packetMetadata, renderField, evidenceLead, children }: TaskReaderContentProps): JSX.Element {
   const id = useId();
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   const [focused, setFocused] = useState<ReaderTab>(active);
@@ -88,6 +89,7 @@ export function TaskReaderContent({ active, onChange, identity, fields, packetMe
         }}>{tab}</button>)}
     </div>
     <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${active}`} className="space-y-5">
+      {active === "Evidence" ? evidenceLead : null}
       {active === "Implementation" ? <ImplementationSummary metadata={packetMetadata} /> : null}
       {active === "Implementation" ? <section aria-labelledby={`${id}-recorded`} className="space-y-5">
         <h3 id={`${id}-recorded`} className="text-sm font-medium">Recorded fields</h3>

@@ -1,4 +1,4 @@
-import type { Board, LastChange, Task } from "./contracts.ts";
+import type { Board, LastChange, Task, Workflow } from "./contracts.ts";
 import { buildDependencyGraph } from "./dependency-graph.ts";
 import { comparePriority } from "./priority.ts";
 import { daysSince } from "./time.ts";
@@ -19,6 +19,10 @@ export interface StaleTaskSelection {
 export type LastChangeLookup =
   | Readonly<Record<string, LastChange>>
   | ((task: Task) => LastChange | undefined);
+
+export function isActiveStatus(task: Task, workflow: Workflow): boolean {
+  return task.statusBase !== null && workflow.activeStatuses.includes(task.statusBase);
+}
 
 export function taskFanOut(
   board: Board,
@@ -50,9 +54,7 @@ export function selectStaleTasks(
 ): readonly StaleTaskSelection[] {
   const instant = now instanceof Date ? now.getTime() : now;
   return tasks
-    .filter((task) =>
-      task.statusBase !== null && board.workflow.activeStatuses.includes(task.statusBase),
-    )
+    .filter((task) => isActiveStatus(task, board.workflow))
     .flatMap((task): readonly StaleTaskSelection[] => {
       const lastChange = typeof lastChanged === "function"
         ? lastChanged(task)

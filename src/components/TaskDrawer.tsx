@@ -10,6 +10,7 @@ import { stampDateOf, withoutStamp } from "../../shared/stamp.ts";
 import { canonicalTaskUrl, taskSummary } from "../task-navigation.ts";
 import { parseStatusValue } from "../../shared/status.ts";
 import { Notice } from "./Notice.tsx";
+import { ReadinessStates } from "./ReadinessStates.tsx";
 import { StatusTag, Tag } from "./Tag.tsx";
 import { TaskActivity } from "./TaskActivity.tsx";
 import { TaskReaderContent, type ReaderTab } from "./TaskReaderContent.tsx";
@@ -312,7 +313,7 @@ export function TaskDrawer({
         <div ref={drawerFocusTarget} tabIndex={-1} data-testid="task-drawer-focus" className="task-reader-summary focus-ring rounded-lg">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <StatusTag tone={statusTone(task.statusBase, board.workflow)}>
-              {task.statusBase ?? "no status"}
+              {`Tracker status: ${task.statusBase ?? "no status"}`}
             </StatusTag>
             {task.priority ? <Tag tone={priorityTone(task.priority, board.workflow.priorityOrder)}>{task.priority}</Tag> : null}
             {task.readiness === "startable" ? (
@@ -331,6 +332,7 @@ export function TaskDrawer({
 
         <TaskReaderContent active={activeTab} onChange={setActiveTab} identity={taskIdentity!}
           packetMetadata={task.packetMetadata}
+          evidenceLead={<ReadinessStates task={task} manifest={board.qwenReadiness.status} />}
           fields={detail?.fields ?? []} renderField={(field) => <Field field={field} onSelectTask={onSelectTask} />}>
         {activeTab === "Overview" ? <section className="text-sm">
           <h3 className="text-xs font-medium text-ui-text-muted">Next action</h3>

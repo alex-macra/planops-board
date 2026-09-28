@@ -44,7 +44,12 @@ export async function createDemoRepository(destination) {
   return root;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
+// The packaged CLI bundles this module, where import.meta.filename is the CLI itself.
+if (
+  path.basename(import.meta.filename) === "create-demo-repository.mjs" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(import.meta.filename)
+) {
   const destination = process.argv[2];
   if (!destination) {
     process.stderr.write("Usage: npm run demo:init -- <destination>\n");

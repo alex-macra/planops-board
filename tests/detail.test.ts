@@ -202,6 +202,52 @@ describe("ordered Qwen packet structure", () => {
     expect(qwen3CoderNextPacketIsReady(blocksOf(packet.replace(marker, replacement))[0]!)).toBe(false);
   });
 
+  const flashMarker = "#### Qwen3.8-Flash-Next packet";
+  const flashPacket = packet.replace(marker, flashMarker);
+
+  it("recognizes the Qwen3.8-Flash-Next standalone-label packet form", () => {
+    const markdown = packet.replace(marker, "**Qwen3.8-Flash-Next packet**")
+      .replaceAll(/- \*\*([^*]+):\*\* ?([^\n]*)/g, "\n**$1**\n$2");
+    expect(qwen3CoderNextPacketIsReady(blocksOf(markdown)[0]!)).toBe(true);
+  });
+
+  it.each([
+    ["generic heading beside Qwen3.8", `${flashMarker}\n\n#### Qwen task packet`],
+    ["generic label beside Qwen3.8", `${flashMarker}\n\n**Qwen packet**`],
+    ["case-folded Qwen3.8", "#### qwen3.8-flash-next packet"],
+    ["Qwen3.8 heading and label", `${flashMarker}\n\n**Qwen3.8-Flash-Next packet**`],
+    ["prefixed Qwen3.8", "#### Draft Qwen3.8-Flash-Next packet"],
+    ["double-spaced Qwen3.8", "#### Qwen3.8-Flash-Next  packet"],
+  ])("rejects the Qwen3.8 %s marker", (_label, replacement) => {
+    expect(qwen3CoderNextPacketIsReady(blocksOf(packet.replace(marker, replacement!))[0]!)).toBe(false);
+  });
+
+  it.each([
+    ["nonliteral status", flashPacket.replace("Packet status: READY", "Packet status: READY.")],
+    ["duplicate status", flashPacket.replace("Packet status: READY", "Packet status: READY\n  - Packet status: BLOCKED_BY_SPEC")],
+    ["lowercase sole status", flashPacket.replace("Packet status: READY", "packet status: READY")],
+    ["misplaced status", flashPacket.replace("Packet status: READY", "Awaiting evidence").replace("Record the orbit.", "Packet status: READY")],
+    ["blocked status", flashPacket.replace("Packet status: READY", "Packet status: BLOCKED_BY_SPEC")],
+    ["missing field", flashPacket.replace("- **Why:** Observations need a timestamp.\n", "")],
+    ["reordered fields", flashPacket.replace("- **Objective:** Record the orbit.\n- **Why:** Observations need a timestamp.",
+      "- **Why:** Observations need a timestamp.\n- **Objective:** Record the orbit.")],
+    ["duplicate field", flashPacket.replace("- **Objective:** Record the orbit.", "- **Objective:** Record the orbit.\n- **Objective:** Another objective.")],
+    ["duplicate field ranges", `${flashPacket}\n${fields}`],
+  ])("rejects a Qwen3.8 packet with %s", (_label, markdown) => {
+    expect(markdown).toContain(flashMarker);
+    expect(qwen3CoderNextPacketIsReady(blocksOf(markdown!)[0]!)).toBe(false);
+  });
+
+  it("returns the same Qwen3.8 result without changing frozen input", () => {
+    const block = blocksOf(flashPacket)[0]!;
+    const before = JSON.stringify(block);
+    for (const field of block.fields) { Object.freeze(field.items); Object.freeze(field); }
+    Object.freeze(block.fields); Object.freeze(block.prose); Object.freeze(block);
+    expect(qwen3CoderNextPacketIsReady(block)).toBe(true);
+    expect(qwen3CoderNextPacketIsReady(block)).toBe(true);
+    expect(JSON.stringify(block)).toBe(before);
+  });
+
   it.each([
     ["generic marker", packet.replace(marker, "#### Qwen task packet")],
     ["missing marker", packet.replace(marker, "#### Implementation notes")],

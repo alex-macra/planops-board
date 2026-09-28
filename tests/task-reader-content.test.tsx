@@ -185,6 +185,21 @@ describe("task reader content", () => {
     expect(tab("Implementation")).toHaveAttribute("aria-selected", "true");
   });
 
+  it("removes stale packet diagnostics on a live update while keeping Implementation selected", () => {
+    const empty = { ...metadata, files: [], sizeException: null };
+    const { rerender } = render(<TaskDrawer {...props} task={{ ...task, packetMetadata: { ...empty, issues: ["Fictional diagnostic"] } }} />);
+    select("Implementation");
+    expect(summary().getByRole("heading", { level: 4, name: "Packet diagnostics" })).toBeVisible();
+    expect(within(summary().getByRole("list", { name: "Packet diagnostics" })).getByText("Fictional diagnostic")).toBeVisible();
+    expect(summary().getByText("No parsed file plans recorded.")).toBeVisible();
+    rerender(<TaskDrawer {...props} task={{ ...task, packetMetadata: { ...empty, issues: [] } }} />);
+    expect(summary().queryByRole("heading", { name: "Packet diagnostics" })).not.toBeInTheDocument();
+    expect(summary().queryByRole("list", { name: "Packet diagnostics" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Fictional diagnostic")).not.toBeInTheDocument();
+    expect(tab("Implementation")).toHaveAttribute("aria-selected", "true");
+    expect(summary().getByText("No parsed file plans recorded.")).toBeVisible();
+  });
+
   it("partitions repeated fields and dates once while retaining notes and unknown prose", async () => {
     const groups = { Overview: ["Objective", "Why", "Scope", "Scope", "Acceptance criteria", "Acceptance criteria"],
       Implementation: ["Unknown field"], Evidence: ["Readiness", "Verify", "Handoff", "Evidence", "Evidence", "Note"] };

@@ -8,12 +8,14 @@ interface Props {
   readonly onOpenGraph?: () => void;
   readonly onShowInBacklog?: () => void;
   readonly extraGroups?: readonly DropdownGroup[];
+  readonly onMenuOpenChange?: (open: boolean) => void;
 }
 
-export function TaskActions({ taskId, onOpenDetails, onOpenGraph, onShowInBacklog, extraGroups = [] }: Props): JSX.Element {
+export function TaskActions({ taskId, onOpenDetails, onOpenGraph, onShowInBacklog, extraGroups = [], onMenuOpenChange }: Props): JSX.Element {
   return (
     <DropdownMenu
       align="end"
+      onOpenChange={onMenuOpenChange}
       triggerLabel={`Actions for ${taskId}`}
       trigger={<span className="task-actions-icon"><MoreHorizontal size={16} aria-hidden /></span>}
       groups={[

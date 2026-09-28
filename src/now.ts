@@ -1,5 +1,5 @@
 import type { Board, LastChange, ProjectSummary, Task } from "../shared/contracts.ts";
-import { selectStaleTasks, STALE_DAYS, taskFanOut } from "../shared/task-selectors.ts";
+import { isActiveStatus, selectStaleTasks, STALE_DAYS, taskFanOut } from "../shared/task-selectors.ts";
 import { isImpactClosed } from "./dependency-graph.ts";
 import { comparePriority } from "./priority.ts";
 
@@ -105,10 +105,7 @@ export function buildNow(
       (task) => {
         if (isImpactClosed(task, board.workflow)) return false;
         if (task.readiness === "needs-gate-check" || task.readiness === null) return false;
-        if (
-          task.readiness !== "startable" &&
-          (task.statusBase === null || !board.workflow.activeStatuses.includes(task.statusBase))
-        ) return false;
+        if (task.readiness !== "startable" && !isActiveStatus(task, board.workflow)) return false;
         const count = counts.get(task.id) ?? 0;
         return count > 0 ? `unblocks ${count}` : false;
       },
@@ -126,7 +123,7 @@ export function buildNow(
       "land",
       "Active work",
       "Configured as active and not already shown by a more specific signal.",
-      (task) => task.statusBase !== null && board.workflow.activeStatuses.includes(task.statusBase) ? null : false,
+      (task) => isActiveStatus(task, board.workflow) ? null : false,
     ),
   ].filter((group) => group.rows.length > 0);
 
@@ -146,7 +143,7 @@ export function buildNow(
     {
       key: "moving",
       label: "active and recently touched",
-      test: (task) => task.statusBase !== null && board.workflow.activeStatuses.includes(task.statusBase),
+      test: (task) => isActiveStatus(task, board.workflow),
     },
     { key: "unstated", label: "carrying no status at all", test: (task) => task.statusBase === null },
     { key: "other", label: "queued behind nothing in particular", test: () => true },
