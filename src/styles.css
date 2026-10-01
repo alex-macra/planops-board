@@ -660,6 +660,30 @@ html.dark {
     @apply tabular flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-ui-text-subtle;
   }
 
+  .now-row-delivery {
+    @apply col-span-full min-w-0 truncate border-t border-ui-border/50 pt-1 text-[10.5px] text-ui-text-subtle;
+  }
+
+  .now-row-delivery-label {
+    @apply font-semibold text-ui-text-muted;
+  }
+
+  .backlog-order-controls {
+    @apply flex items-center justify-center gap-1;
+  }
+
+  .backlog-drag-handle {
+    @apply cursor-grab active:cursor-grabbing;
+  }
+
+  .backlog-order-buttons {
+    @apply flex items-center;
+  }
+
+  .backlog-reorder-button {
+    @apply flex size-8 items-center justify-center rounded text-ui-text-subtle hover:bg-ui-bg-muted hover:text-ui-text disabled:cursor-not-allowed disabled:opacity-35;
+  }
+
   /* What the view is *not* showing, and why. A Now view that silently drops 250
    * rows is worth less than the Backlog it replaced. */
   .now-folded {
@@ -1151,6 +1175,9 @@ html.dark:has(.ux-portfolio) {
   padding: 1rem 0.75rem 1rem 0;
 }
 .ux-portfolio .portfolio-rail-heading { padding: 0.35rem 0.75rem 0.75rem; }
+.ux-portfolio .portfolio-rail-heading-row { display: flex; align-items: center; justify-content: space-between; }
+.ux-portfolio .portfolio-rail-toggle { display: none; min-width: 2.5rem; min-height: 2.5rem; align-items: center; justify-content: center; border-radius: 0.6rem; color: rgb(var(--ui-text-subtle)); }
+.ux-portfolio .portfolio-rail-toggle:hover { background: rgb(var(--ui-bg-raised)); color: rgb(var(--ui-text)); }
 .ux-portfolio .portfolio-rail-heading strong {
   display: block;
   margin-top: 0.35rem;
@@ -1199,6 +1226,7 @@ html.dark:has(.ux-portfolio) {
   background: rgb(var(--ui-accent) / 0.08);
 }
 .ux-portfolio .portfolio-project-name { color: rgb(var(--ui-text)); font-size: 0.82rem; font-weight: 650; }
+.ux-portfolio .portfolio-project-initial { display: none; color: rgb(var(--ui-accent)); font-size: 0.75rem; font-weight: 700; letter-spacing: -0.02em; }
 .ux-portfolio .portfolio-project-count { color: rgb(var(--ui-text-subtle)); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
 .ux-portfolio .portfolio-project-row > button:last-child {
   position: absolute;
@@ -1285,7 +1313,24 @@ html.dark:has(.ux-portfolio) {
     width: 15.5rem;
     overflow: hidden;
   }
+  .ux-portfolio .portfolio-rail-toggle { display: inline-flex; }
   .ux-portfolio > :not(.app-header):not(.portfolio-rail) { margin-left: 16.5rem; }
+
+  .ux-portfolio.rail-collapsed .portfolio-rail { width: 4rem; padding-right: 0.25rem; padding-left: 0.25rem; }
+  .ux-portfolio.rail-collapsed > :not(.app-header):not(.portfolio-rail) { margin-left: 5rem; }
+  .ux-portfolio.rail-collapsed .portfolio-rail-heading { padding: 0.35rem 0; }
+  .ux-portfolio.rail-collapsed .portfolio-rail-heading-row { justify-content: center; }
+  .ux-portfolio.rail-collapsed .portfolio-rail-heading-row .view-eyebrow,
+  .ux-portfolio.rail-collapsed .portfolio-rail-heading > strong,
+  .ux-portfolio.rail-collapsed .portfolio-rail-heading > p,
+  .ux-portfolio.rail-collapsed .portfolio-search,
+  .ux-portfolio.rail-collapsed .portfolio-search-count,
+  .ux-portfolio.rail-collapsed .portfolio-project-name,
+  .ux-portfolio.rail-collapsed .portfolio-project-count,
+  .ux-portfolio.rail-collapsed .portfolio-project-row > button:last-child { display: none; }
+  .ux-portfolio.rail-collapsed .portfolio-projects { align-items: center; }
+  .ux-portfolio.rail-collapsed .portfolio-project { width: 2.75rem; min-height: 2.75rem; justify-content: center; padding: 0; }
+  .ux-portfolio.rail-collapsed .portfolio-project-initial { display: inline; }
 }
 
 @media (max-width: 959px) {
@@ -1298,6 +1343,7 @@ html.dark:has(.ux-portfolio) {
     padding: 0.5rem;
   }
   .ux-portfolio .portfolio-rail-heading { display: none; }
+  .ux-portfolio .portfolio-rail-toggle { display: none; }
   .ux-portfolio .portfolio-projects {
     display: grid;
     grid-auto-flow: column;

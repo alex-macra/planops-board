@@ -150,7 +150,7 @@ describe("Roadmap in the real App", () => {
     if (originalStorage === null) localStorage.removeItem("projects-board.dark-mode"); else localStorage.setItem("projects-board.dark-mode", originalStorage);
   });
   function transport(board: Board | null = fixture()) {
-    vi.spyOn(state, "useBoard").mockReturnValue({ board, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null, writing: false,
+    vi.spyOn(state, "useBoard").mockReturnValue({ board, sourceRef: "fictional", sourceSha: "a".repeat(40), tracking: null, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null, writing: false,
       lastChanged: {}, live: "unsupported", behind: false, refreshedAt: null, checkedAt: null, reload: async () => true,
       setStatus: async () => {}, setPriority: async () => {}, moveRow: async () => {}, addNote: async () => {}, undo: async () => {}, clearTouched: () => {} });
   }

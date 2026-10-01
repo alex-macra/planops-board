@@ -102,6 +102,26 @@ test("edits, undoes, annotates, branches, and commits a fictional task", async (
   await expect(commitPanel.getByText("No configured Markdown changes to commit.")).toBeVisible();
 });
 
+test("collapses the project explorer while keeping project navigation available", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/");
+  const rail = page.getByRole("complementary", { name: "Project explorer" });
+  await expect(page.getByRole("button", { name: "Collapse project explorer" })).toBeVisible();
+  await expect(page.getByTestId("source-revision-status")).toHaveText("Snapshot current at local source");
+  const expandedWidth = (await rail.boundingBox())?.width;
+  await page.getByRole("button", { name: "Collapse project explorer" }).click();
+  await expect(page.getByRole("button", { name: "Expand project explorer" })).toHaveAttribute("aria-expanded", "false");
+  const moonGarden = page.getByRole("button", { name: /^Moon Garden .* tasks/ });
+  await expect(moonGarden).toBeVisible();
+  const collapsedWidth = (await rail.boundingBox())?.width;
+  expect(expandedWidth).toBeGreaterThan(200);
+  expect(collapsedWidth).toBeCloseTo(64, 0);
+  await moonGarden.click();
+  await expect(moonGarden).toHaveAttribute("aria-current", "true");
+  await page.getByRole("button", { name: "Expand project explorer" }).click();
+  await expect(page.getByRole("button", { name: "Collapse project explorer" })).toHaveAttribute("aria-expanded", "true");
+});
+
 for (const viewport of [1440, 1920]) {
   test(`task reader presets keep at least half of a ${viewport}px viewport`, async ({ page }) => {
     await page.setViewportSize({ width: viewport, height: 1000 });

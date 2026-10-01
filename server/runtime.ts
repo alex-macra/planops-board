@@ -29,6 +29,8 @@ export interface BoardRuntime {
   readonly configPath: string;
   readonly config: BoardConfig;
   readonly port: number;
+  readonly readOnly: boolean;
+  readonly trackingRef: string | null;
   readonly projects: readonly ProjectDefinition[];
   readonly externalValidator: ExternalValidator | null;
 }
@@ -38,6 +40,8 @@ export interface RuntimeOptions {
   readonly config?: string;
   readonly port?: number;
   readonly allowExternalValidator?: boolean;
+  readonly readOnly?: boolean;
+  readonly trackingRef?: string;
   readonly engineRoot?: string;
 }
 
@@ -365,6 +369,23 @@ async function externalValidator(root: string, enabled: boolean): Promise<Extern
 
 export async function loadBoardRuntime(options: RuntimeOptions): Promise<BoardRuntime> {
   const repositoryRoot = await canonicalGitRoot(options.repo);
+  const readOnly = options.readOnly === true;
+  if (options.trackingRef !== undefined && !readOnly) {
+    throw new RuntimeConfigError("--tracking-ref requires read-only mode");
+  }
+  if (options.trackingRef !== undefined && !options.trackingRef.startsWith("refs/remotes/")) {
+    throw new RuntimeConfigError("--tracking-ref must name a local refs/remotes ref");
+  }
+  if (options.trackingRef !== undefined) {
+    try {
+      await runGitCommand(repositoryRoot, ["check-ref-format", options.trackingRef]);
+    } catch {
+      throw new RuntimeConfigError("--tracking-ref is not a valid Git ref");
+    }
+  }
+  if (readOnly && options.allowExternalValidator === true) {
+    throw new RuntimeConfigError("read-only mode cannot run an external validator");
+  }
   const [{ path: configPath, value: config }, engineRoot, gitDirectory] = await Promise.all([
     loadBoardConfig(repositoryRoot, options.config),
     realpath(path.resolve(options.engineRoot ?? path.join(import.meta.dirname, ".."))),
@@ -390,6 +411,8 @@ export async function loadBoardRuntime(options: RuntimeOptions): Promise<BoardRu
     configPath,
     config,
     port,
+    readOnly,
+    trackingRef: options.trackingRef ?? null,
     projects,
     externalValidator: validator,
   };

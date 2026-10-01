@@ -160,6 +160,14 @@ describe("PlanOps Board CLI", () => {
     expect(result.stderr).toContain("planops-board: Usage:");
     expect(result.stderr).toContain("planops-board dev --repo <path>");
     expect(result.stderr).toContain("planops-board start --repo <path>");
+    expect(result.stderr).toContain("--read-only");
+    expect(result.stderr).toContain("--tracking-ref <refs/remotes/...>");
+  });
+
+  test("requires read-only mode for a fetched tracking ref", async () => {
+    const result = await runCli(["start", "--repo", "REPO", "--tracking-ref", "refs/remotes/origin/dev"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("--tracking-ref requires --read-only");
   });
 
   test("dev exits promptly when its configured port is already in use", async () => {

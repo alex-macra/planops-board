@@ -8,6 +8,7 @@ import { extractDetailBlocks } from "../server/ledger/detail.ts";
 import { taskPacketMetadata } from "../server/ledger/qwen-readiness.ts";
 import * as api from "../src/api.ts";
 import { TaskDrawer } from "../src/components/TaskDrawer.tsx";
+import { Now } from "../src/views/Now.tsx";
 
 const base = toBoardResponse(buildBoard([{ path: "plans/orbit.md", sha256: "a".repeat(64), text: [
   "# Orbit", "| ID | Priority | Status | Dependencies | Required outcome |", "|---|---|---|---|---|",
@@ -62,6 +63,50 @@ describe("task reader content", () => {
     expect(recorded().getAllByRole("heading").slice(1).map((node) => node.textContent)).toEqual(fields.map((field) => field.label + field.date));
     expect(recorded().getByText("Source 2")).toBeVisible();
     expect(summary().queryAllByRole("link")).toHaveLength(0); expect(summary().queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("shows a validated delivery summary in task details", () => {
+    const deliverySummary = {
+      version: 1 as const,
+      runId: "run-orbit-7",
+      executor: "qwen3.8" as const,
+      phase: "review",
+      outcome: "checks-passed",
+      evidence: ["PR #7", "CI 88"],
+      nextGate: "merge",
+      updatedAt: "2026-09-30T12:30:00.000Z",
+      productRevision: "b".repeat(40),
+    };
+    const currentTask = { ...task, deliverySummary };
+    render(<TaskDrawer {...props} task={currentTask} board={{ ...base, tasks: [currentTask] }} />);
+    const region = screen.getByRole("region", { name: "Delivery summary" });
+    for (const value of [deliverySummary.runId, deliverySummary.executor, deliverySummary.phase,
+      deliverySummary.outcome, deliverySummary.nextGate, deliverySummary.productRevision, ...deliverySummary.evidence]) {
+      expect(within(region).getByText(value, { exact: true })).toBeVisible();
+    }
+    expect(within(region).getByRole("time")).toHaveAttribute("dateTime", deliverySummary.updatedAt);
+  });
+
+  it("shows the executor and next gate on the Now task row", () => {
+    const currentTask = {
+      ...task,
+      readiness: "startable" as const,
+      deliverySummary: {
+        version: 1 as const,
+        runId: "run-orbit-7",
+        executor: "qwen3.8" as const,
+        phase: "review",
+        outcome: "checks-passed",
+        evidence: ["PR #7"],
+        nextGate: "merge",
+        updatedAt: "2026-09-30T12:30:00.000Z",
+        productRevision: "b".repeat(40),
+      },
+    };
+    render(<Now board={{ ...base, tasks: [currentTask] }} tasks={[currentTask]} lastChanged={{}}
+      onSelectTask={vi.fn()} onOpenBacklog={vi.fn()} />);
+    expect(screen.getByText("Delivery", { exact: true })).toBeVisible();
+    expect(screen.getByTitle("qwen3.8 · review · checks-passed · Next gate: merge")).toBeVisible();
   });
 
   it.each(["verification", "research-docs", "owner-action", "external-hardware"] as const)("keeps %s non-code with no invented LOC", (workKind) => {

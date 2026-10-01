@@ -12,6 +12,7 @@ import { parseStatusValue } from "../../shared/status.ts";
 import { Notice } from "./Notice.tsx";
 import { ReadinessStates } from "./ReadinessStates.tsx";
 import { StatusTag, Tag } from "./Tag.tsx";
+import { DeliverySummaryDetails } from "./DeliverySummaryDetails.tsx";
 import { TaskActivity } from "./TaskActivity.tsx";
 import { TaskReaderContent, type ReaderTab } from "./TaskReaderContent.tsx";
 import { priorityTone, statusTone } from "./tone.ts";
@@ -333,7 +334,8 @@ export function TaskDrawer({
         <TaskReaderContent active={activeTab} onChange={setActiveTab} identity={taskIdentity!}
           packetMetadata={task.packetMetadata}
           evidenceLead={<ReadinessStates task={task} manifest={board.qwenReadiness.status} />}
-          fields={detail?.fields ?? []} renderField={(field) => <Field field={field} onSelectTask={onSelectTask} />}>
+          fields={detail?.fields.filter((field) => !(field.label === "Delivery summary" && task.deliverySummary != null)) ?? []}
+          renderField={(field) => <Field field={field} onSelectTask={onSelectTask} />}>
         {activeTab === "Overview" ? <section className="text-sm">
           <h3 className="text-xs font-medium text-ui-text-muted">Next action</h3>
           <p>{task.readiness === "startable" ? "Dependencies are satisfied. Review the implementation brief."
@@ -348,6 +350,9 @@ export function TaskDrawer({
             <KV k="Owners" v={task.owners.length ? task.owners.join(", ") : "-"} />
           </div>
         </section> : null}
+        {activeTab === "Overview" && task.deliverySummary ? (
+          <DeliverySummaryDetails summary={task.deliverySummary} />
+        ) : null}
         {activeTab === "Dependencies" && readinessDetail.length > 0 ? (
           <section className="rounded-xl border border-ui-border bg-ui-bg-muted p-3">
             <h3 className="text-xs font-medium text-ui-text">

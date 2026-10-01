@@ -1,4 +1,6 @@
 import { createServer as createPortProbe, request as httpRequest } from "node:http";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,10 +11,11 @@ import {
   LOOPBACK_HOST,
   MAX_BODY_BYTES,
 } from "../server/http.ts";
+import { handleApi } from "../server/api.ts";
 import { createBoardServer } from "../server/index.ts";
 import { loadBoardRuntime } from "../server/runtime.ts";
 import { createBoardViteConfig } from "../vite.config.ts";
-import { disposableDemo, removeDisposableDemo } from "./fixture.ts";
+import { disposableDemo, git, removeDisposableDemo } from "./fixture.ts";
 
 interface HttpResult {
   readonly status: number;
@@ -86,9 +89,9 @@ function request(
   });
 }
 
-async function startAdapter(kind: "development" | "production", root: string): Promise<RunningAdapter> {
+async function startAdapter(kind: "development" | "production", root: string, readOnly = false): Promise<RunningAdapter> {
   const port = await availablePort();
-  const runtime = await loadBoardRuntime({ repo: root, port });
+  const runtime = await loadBoardRuntime({ repo: root, port, readOnly });
   if (kind === "development") {
     const server: ViteDevServer = await createViteServer({
       ...createBoardViteConfig(runtime),
@@ -197,5 +200,70 @@ describe.each(["development", "production"] as const)("%s HTTP adapter", (kind) 
     });
     expect(response.status).toBe(400);
     expect(response.body).toContain("too large");
+  });
+});
+
+describe("read-only server mode", () => {
+  let root: string;
+  let adapter: RunningAdapter;
+
+  beforeAll(async () => {
+    root = await disposableDemo();
+    adapter = await startAdapter("production", root, true);
+  });
+
+  afterAll(async () => {
+    if (adapter !== undefined) await adapter.close();
+    if (root !== undefined) await removeDisposableDemo(root);
+  });
+
+  it("reports the read-only capability and the live source revision", async () => {
+    const session = await request(adapter.port, { path: "/api/session" });
+    expect(JSON.parse(session.body)).toMatchObject({
+      readOnly: true,
+      capabilities: { localWrites: false, history: true, liveEvents: true },
+    });
+    const board = await request(adapter.port);
+    expect(board.status).toBe(200);
+    expect(board.headers["x-board-source-ref"]).toBeTruthy();
+    expect(board.headers["x-board-source-sha"]).toMatch(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+    await expect(loadBoardRuntime({ repo: root, readOnly: true, allowExternalValidator: true }))
+      .rejects.toThrow("read-only mode cannot run an external validator");
+  });
+
+  it("reports when detached source HEAD trails its fetched local tracking ref", async () => {
+    const laggingRoot = await disposableDemo();
+    try {
+      const localSha = await git(laggingRoot, "rev-parse", "HEAD");
+      await git(laggingRoot, "commit", "--allow-empty", "-m", "Advance fetched origin dev");
+      await git(laggingRoot, "update-ref", "refs/remotes/origin/dev", "HEAD");
+      const trackingSha = await git(laggingRoot, "rev-parse", "refs/remotes/origin/dev");
+      await git(laggingRoot, "checkout", "--detach", localSha);
+
+      const runtime = await loadBoardRuntime({
+        repo: laggingRoot,
+        readOnly: true,
+        trackingRef: "refs/remotes/origin/dev",
+      });
+      const response = await handleApi(runtime, "GET", "/api/board", null);
+      expect(response.status).toBe(200);
+      expect(response.headers).toMatchObject({
+        "x-board-source-sha": localSha,
+        "x-board-tracking-ref": "refs/remotes/origin/dev",
+        "x-board-tracking-sha": trackingSha,
+        "x-board-tracking-relation": "behind",
+      });
+    } finally {
+      await removeDisposableDemo(laggingRoot);
+    }
+  });
+
+  it.each(["/api/write", "/api/note", "/api/git/commit"])("refuses %s before parsing a request body", async (routePath) => {
+    const plan = path.join(root, "plans", "moon-garden.md");
+    const before = await readFile(plan, "utf8");
+    const response = await request(adapter.port, { method: "POST", path: routePath, body: "{" });
+    expect(response.status).toBe(403);
+    expect(response.body).toContain("read-only");
+    expect(await readFile(plan, "utf8")).toBe(before);
   });
 });
