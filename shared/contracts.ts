@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { dataQualityIssueKindSchema } from "./data-quality.ts";
+import { deliverySummarySchema } from "./delivery-summary.ts";
 
 const stringList = z.array(z.string()).readonly();
 
@@ -94,6 +95,7 @@ const taskSchema = z.object({
   dependencies: z.array(dependencySchema).readonly(),
   dependencyResidue: stringList,
   outcome: z.string(),
+  deliverySummary: deliverySummarySchema.nullable().optional(),
   raw: z.record(z.string(), z.string()).readonly(),
   statusCell: cellRefSchema.nullable(),
   priorityCell: cellRefSchema.nullable(),
@@ -219,10 +221,19 @@ export const apiFailureSchema = z.object({
 }).readonly();
 export type ApiFailure = z.infer<typeof apiFailureSchema>;
 
+export const sourceTrackingSchema = z.object({
+  ref: z.string().min(1).max(1_024),
+  sha: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i).nullable(),
+  relation: z.enum(["same", "behind", "ahead", "diverged", "unavailable"]),
+}).readonly();
+export type SourceTracking = z.infer<typeof sourceTrackingSchema>;
+
 export const sessionSchema = z.object({
   sourceRef: z.string(),
   sourceSha: z.string(),
   builtAt: z.string(),
+  readOnly: z.boolean().optional(),
+  tracking: sourceTrackingSchema.nullable().optional(),
   capabilities: z.object({
     history: z.boolean(),
     liveEvents: z.boolean(),

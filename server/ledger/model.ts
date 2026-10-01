@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { compareText } from "../../shared/compare.ts";
 import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../../shared/config.ts";
 import type { DataQualityIssueKind } from "../../shared/data-quality.ts";
+import { deliverySummaryFromFields, type DeliverySummary } from "../../shared/delivery-summary.ts";
 import { extractDetailBlocks, qwen3CoderNextPacketIsReady, type DetailBlock } from "./detail.ts";
 import { extractTables, pythonStrip, type Table, type TableRow } from "./parse.ts";
 import {
@@ -107,6 +108,7 @@ export interface Task extends TaskExecutionAssessment {
   /** Non-separator text left after every dependency token was extracted. */
   readonly dependencyResidue: readonly string[];
   readonly outcome: string;
+  readonly deliverySummary: DeliverySummary | null;
   readonly raw: Readonly<Record<string, string>>;
   readonly statusCell: CellRef | null;
   readonly priorityCell: CellRef | null;
@@ -370,7 +372,7 @@ export function buildBoard(
   const issues: DataQualityIssue[] = [];
   const details: DetailBlock[] = [];
   const stories: Story[] = [];
-  const drafts: (Omit<Task, "dependencies" | "dependencyResidue" | "readiness" |
+  const drafts: (Omit<Task, "dependencies" | "dependencyResidue" | "readiness" | "deliverySummary" |
     "title" | "storyId" | "qwen3CoderNextReady" | "packetMetadata" | keyof TaskExecutionAssessment> & {
     pending: ParsedDependencies;
   })[] = [];
@@ -718,6 +720,7 @@ export function buildBoard(
       storyId,
       qwen3CoderNextReady: detail !== null && qwen3CoderNextPacketIsReady(detail),
       packetMetadata,
+      deliverySummary: detail === null ? null : deliverySummaryFromFields(detail.fields),
       dependencies,
       dependencyResidue: draft.pending.residue,
       readiness: !draft.writable || closed

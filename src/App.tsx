@@ -10,13 +10,14 @@ import {
   useDarkMode,
   useToast,
 } from "./ui/index.tsx";
-import { Check, MoreHorizontal, RefreshCw, Search, Undo2, X } from "lucide-react";
+import { Check, MoreHorizontal, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Undo2, X } from "lucide-react";
 import type { JSX } from "react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchSession, type BoardSession, type Task } from "./api.ts";
 import { CommitBar } from "./components/CommitBar.tsx";
 import { LiveIndicator } from "./components/LiveIndicator.tsx";
+import { sourceFreshnessLabel } from "./source-freshness.ts";
 import { Notice } from "./components/Notice.tsx";
 import { SavedViews } from "./components/SavedViews.tsx";
 import { StoryDrawer } from "./components/StoryDrawer.tsx";
@@ -89,6 +90,9 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
   const dragging = useDragActive();
   const {
     board,
+    sourceRef,
+    sourceSha,
+    tracking,
     git,
     loading,
     error,
@@ -116,6 +120,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
   const [jumpOpen, setJumpOpen] = useState(false);
   const [kanbanConfirmOpen, setKanbanConfirmOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
+  const [railCollapsed, setRailCollapsed] = useState(false);
   const projectSearchRef = useRef<HTMLInputElement>(null);
   const jumpReturnFocus = useRef<HTMLElement | null>(null);
 
@@ -334,7 +339,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
   );
 
   return (
-    <div className="app-shell ux-portfolio mx-auto flex min-h-screen max-w-[104rem] flex-col gap-4 px-4 pb-6 sm:px-6">
+    <div className={`app-shell ux-portfolio mx-auto flex min-h-screen max-w-[104rem] flex-col gap-4 px-4 pb-6 sm:px-6${railCollapsed ? " rail-collapsed" : ""}`}>
       {/* The board scrolls both ways underneath; the controls that steer it stay. */}
       <header className="app-header toolbar sticky top-0 z-30 -mx-4 border-b border-ui-border bg-ui-bg/90 px-4 backdrop-blur sm:-mx-6 sm:px-6">
         <div className="app-header-main">
@@ -384,16 +389,20 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
               ariaLabel="Board view"
             />
           </div>
-          <SavedViews query={query} sourceSha={session.sourceSha} onApply={(patch) => setQuery({ ...patch, task: null, story: null, focus: null }, "push")} />
+          <SavedViews query={query} sourceSha={sourceSha} onApply={(patch) => setQuery({ ...patch, task: null, story: null, focus: null }, "push")} />
         </div>
         <details className="source-freshness" data-testid="source-freshness">
           <summary>
-            Source {session.sourceRef.replace("refs/heads/", "")} at {session.sourceSha.slice(0, 7)}
+            {session.readOnly ? "Read-only source" : "Source"} {sourceRef.replace("refs/heads/", "")} at {sourceSha.slice(0, 7)}
           </summary>
           <div>
-            <span className="mono">{session.sourceSha}</span>
+            <span className="mono">{sourceSha}</span>
+            <span data-testid="source-revision-status">
+              {sourceFreshnessLabel({ behind, live, readOnly: session.readOnly === true, tracking })}
+            </span>
+            {tracking ? <span>Fetched {tracking.ref.replace(/^refs\/remotes\//, "")} at <span className="mono">{tracking.sha ?? "unavailable"}</span></span> : null}
             <span>
-              Built <time dateTime={session.builtAt}>{new Date(session.builtAt).toLocaleString()}</time>
+              Built <time dateTime={board?.generatedAt ?? session.builtAt}>{new Date(board?.generatedAt ?? session.builtAt).toLocaleString()}</time>
             </span>
             <span>
               {checkedAt === null
@@ -406,7 +415,15 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
 
       <aside className="portfolio-rail" aria-label="Project explorer">
         <div className="portfolio-rail-heading">
-          <span className="view-eyebrow">Navigate</span>
+          <div className="portfolio-rail-heading-row">
+            <span className="view-eyebrow">Navigate</span>
+            <button type="button" className="portfolio-rail-toggle focus-ring"
+              aria-label={railCollapsed ? "Expand project explorer" : "Collapse project explorer"}
+              aria-expanded={!railCollapsed} aria-controls="portfolio-project-list"
+              onClick={() => setRailCollapsed((collapsed) => !collapsed)}>
+              {railCollapsed ? <PanelLeftOpen size={16} aria-hidden /> : <PanelLeftClose size={16} aria-hidden />}
+            </button>
+          </div>
           <strong>Projects</strong>
           <p>Choose a project, then follow its work through every view.</p>
         </div>
@@ -421,10 +438,13 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
         {projectTerm && board ? <p className="portfolio-search-count" role="status">
           {visibleProjects.length} of {board.projects.length} projects
         </p> : null}
-        <div className="portfolio-projects">
+        <div id="portfolio-project-list" className="portfolio-projects">
           <button type="button" className="portfolio-project focus-ring"
+            aria-label={`All projects ${board?.tasks.length ?? 0} tasks`}
+            title="All projects"
             aria-current={filters.project === "" ? "true" : undefined}
             onClick={() => openProject("")}>
+            <span className="portfolio-project-initial" aria-hidden="true">All</span>
             <span className="portfolio-project-name">All projects</span>
             <span className="portfolio-project-count">{board?.tasks.length ?? 0} tasks</span>
           </button>
@@ -433,8 +453,11 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
             const startable = projectTasks.filter((task) => task.readiness === "startable").length;
             return <div className="portfolio-project-row" key={project.id}>
               <button type="button" className="portfolio-project focus-ring"
+                aria-label={`${project.label} ${projectTasks.length} tasks · ${startable} ready`}
+                title={project.label}
                 aria-current={filters.project === project.id ? "true" : undefined}
                 onClick={() => openProject(project.id)}>
+                <span className="portfolio-project-initial" aria-hidden="true">{project.label.trim().split(/\s+/).map((word) => word[0]).slice(0, 2).join("").toLocaleUpperCase()}</span>
                 <span className="portfolio-project-name">{project.label}</span>
                 <span className="portfolio-project-count">{projectTasks.length} tasks · {startable} ready</span>
               </button>
@@ -732,8 +755,8 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
           task={selected}
           board={board}
           onClose={() => setQuery({ task: null })}
-          sourceRef={session.sourceRef}
-          sourceSha={session.sourceSha}
+          sourceRef={sourceRef}
+          sourceSha={sourceSha}
           mode={session.capabilities.localWrites
             ? {
                 kind: "local",

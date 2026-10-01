@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { handleApi } from "./api.ts";
+import { handleApi, isMutationApiPath } from "./api.ts";
 import { handleEvents } from "./live.ts";
 import type { BoardRuntime } from "./runtime.ts";
 
@@ -90,6 +90,10 @@ export async function handleBoardHttpRequest(
     return true;
   }
   if (!url.pathname.startsWith("/api/")) return false;
+  if (runtime.readOnly && isMutationApiPath(url.pathname)) {
+    sendJson(response, 403, { error: "this Board server is read-only" });
+    return true;
+  }
   if (url.pathname === "/api/events") {
     handleEvents(runtime, request, response);
     return true;
@@ -104,6 +108,9 @@ export async function handleBoardHttpRequest(
       payload,
       url.searchParams,
     );
+    for (const [name, value] of Object.entries(result.headers ?? {})) {
+      response.setHeader(name, value);
+    }
     sendJson(response, result.status, result.body);
   } catch (error) {
     if (error instanceof HttpRequestError) {

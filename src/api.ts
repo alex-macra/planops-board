@@ -7,6 +7,7 @@ import {
   gitStatusSchema,
   lastChangedSchema,
   sessionSchema,
+  sourceTrackingSchema,
   taskHistorySchema,
   writeResultSchema,
   type ApiFailure,
@@ -15,6 +16,7 @@ import {
   type CellRef,
   type DetailBlock,
   type GitStatusResponse,
+  type SourceTracking,
   type Task,
 } from "../shared/contracts.ts";
 
@@ -36,6 +38,7 @@ export type {
   ParkedState,
   ProjectSummary,
   Readiness,
+  SourceTracking,
   Story,
   StoryKind,
   Task,
@@ -83,7 +86,20 @@ export function fetchSession(): Promise<BoardSession> {
 
 export interface BoardFetchResult {
   readonly board: Board | null;
+  readonly sourceRef: string | null;
   readonly sourceSha: string | null;
+  readonly tracking: SourceTracking | null;
+}
+
+function trackingFromHeaders(headers: Headers): SourceTracking | null {
+  const ref = headers.get("x-board-tracking-ref");
+  if (!ref) return null;
+  const parsed = sourceTrackingSchema.safeParse({
+    ref,
+    sha: headers.get("x-board-tracking-sha") || null,
+    relation: headers.get("x-board-tracking-relation"),
+  });
+  return parsed.success ? parsed.data : null;
 }
 
 export async function fetchBoard(revision?: string): Promise<BoardFetchResult> {
@@ -91,7 +107,12 @@ export async function fetchBoard(revision?: string): Promise<BoardFetchResult> {
     headers: revision ? { "if-none-match": `"${revision}"` } : undefined,
   });
   if (response.status === 304) {
-    return { board: null, sourceSha: response.headers.get("x-board-source-sha") };
+    return {
+      board: null,
+      sourceRef: response.headers.get("x-board-source-ref"),
+      sourceSha: response.headers.get("x-board-source-sha"),
+      tracking: trackingFromHeaders(response.headers),
+    };
   }
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(response.status, failureOf(payload, response.statusText));
@@ -102,7 +123,12 @@ export async function fetchBoard(revision?: string): Promise<BoardFetchResult> {
       details: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("\n"),
     });
   }
-  return { board: parsed.data, sourceSha: response.headers.get("x-board-source-sha") };
+  return {
+    board: parsed.data,
+    sourceRef: response.headers.get("x-board-source-ref"),
+    sourceSha: response.headers.get("x-board-source-sha"),
+    tracking: trackingFromHeaders(response.headers),
+  };
 }
 
 export function fetchGitStatus(): Promise<GitStatusResponse> {

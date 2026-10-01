@@ -65,16 +65,30 @@ Update the document patterns to match your Markdown layout. See the
 Task tables require `ID` and `Status` columns. Optional columns add priorities,
 dependencies, owners, and richer views. The configured project map is optional.
 
+Task detail blocks may include one `Delivery summary` line. Board validates the bounded v1 JSON
+shape, then shows its phase and next gate on Now and the full summary in task details. Duplicate,
+malformed, oversized, and unsupported versions are ignored.
+
+```md
+- **Delivery summary:** {"version":1,"runId":"run-123","executor":"codex","phase":"review","outcome":"checks-passed","evidence":["PR #12"],"nextGate":"merge","updatedAt":"2026-09-30T12:30:00Z","productRevision":"0123456789abcdef0123456789abcdef01234567"}
+```
+
 Available commands:
 
 ```bash
 npm run dev -- --repo <path>
 npm run build
 npm run start -- --repo <path>
+npm run start -- --repo <read-only-worktree> --read-only
+npm run start -- --repo <read-only-worktree> --read-only --tracking-ref refs/remotes/origin/dev
 ```
 
-Both app commands accept `--config <repository-relative-path>` and `--port <number>`. The optional
-`.projects-board/validate` hook is enabled only with `--allow-external-validator`.
+Both app commands accept `--config <repository-relative-path>` and `--port <number>`. Use
+`--read-only` when Board watches a synchronized ledger worktree: write, note, and commit APIs are
+refused by the server, and the UI hides edit and commit controls. Read-only mode cannot run the
+optional `.projects-board/validate` hook. Set `--tracking-ref` to a local `refs/remotes/...` ref to
+show whether the read-only checkout matches, trails, or diverges from the last fetched revision.
+Board compares local Git objects only and never fetches.
 
 ## Agent queries
 

@@ -19,6 +19,8 @@ interface ServerCliOptions {
   readonly config?: string;
   readonly port?: number;
   readonly allowExternalValidator: boolean;
+  readonly readOnly: boolean;
+  readonly trackingRef?: string;
 }
 
 interface QueryCliOptions {
@@ -39,8 +41,8 @@ function usage(): string {
     "Usage:",
     "  planops-board --help",
     "  planops-board demo:init <destination>",
-    "  planops-board dev --repo <path> [--config <repository-relative-path>] [--port <port>] [--allow-external-validator]",
-    "  planops-board start --repo <path> [--config <repository-relative-path>] [--port <port>] [--allow-external-validator]",
+    "  planops-board dev --repo <path> [--config <repository-relative-path>] [--port <port>] [--read-only] [--tracking-ref <refs/remotes/...>] [--allow-external-validator]",
+    "  planops-board start --repo <path> [--config <repository-relative-path>] [--port <port>] [--read-only] [--tracking-ref <refs/remotes/...>] [--allow-external-validator]",
     "  planops-board query startable --repo <path> [--config <repository-relative-path>] --json",
     "  planops-board query stale --repo <path> [--config <repository-relative-path>] --json",
     "  planops-board query issues --repo <path> [--config <repository-relative-path>] --json",
@@ -52,6 +54,8 @@ function parseServerArguments(command: "dev" | "start", argv: readonly string[])
   let config: string | undefined;
   let port: number | undefined;
   let allowExternalValidator = false;
+  let readOnly = false;
+  let trackingRef: string | undefined;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--allow-external-validator") {
@@ -59,7 +63,12 @@ function parseServerArguments(command: "dev" | "start", argv: readonly string[])
       allowExternalValidator = true;
       continue;
     }
-    if (argument !== "--repo" && argument !== "--config" && argument !== "--port") {
+    if (argument === "--read-only") {
+      if (readOnly) throw new ArgumentError("--read-only was supplied twice");
+      readOnly = true;
+      continue;
+    }
+    if (argument !== "--repo" && argument !== "--config" && argument !== "--port" && argument !== "--tracking-ref") {
       throw new ArgumentError(`unknown argument: ${argument ?? ""}\n${usage()}`);
     }
     const value = argv[index + 1];
@@ -71,6 +80,9 @@ function parseServerArguments(command: "dev" | "start", argv: readonly string[])
     } else if (argument === "--config") {
       if (config !== undefined) throw new ArgumentError("--config was supplied twice");
       config = value;
+    } else if (argument === "--tracking-ref") {
+      if (trackingRef !== undefined) throw new ArgumentError("--tracking-ref was supplied twice");
+      trackingRef = value;
     } else {
       if (port !== undefined) throw new ArgumentError("--port was supplied twice");
       port = Number(value);
@@ -80,12 +92,17 @@ function parseServerArguments(command: "dev" | "start", argv: readonly string[])
     }
   }
   if (repo === undefined) throw new ArgumentError(`--repo is required\n${usage()}`);
+  if (trackingRef !== undefined && !readOnly) {
+    throw new ArgumentError("--tracking-ref requires --read-only");
+  }
   return {
     command,
     repo,
     ...(config === undefined ? {} : { config }),
     ...(port === undefined ? {} : { port }),
     allowExternalValidator,
+    readOnly,
+    ...(trackingRef === undefined ? {} : { trackingRef }),
   };
 }
 
@@ -164,6 +181,8 @@ async function main(argv: readonly string[]): Promise<void> {
     ...(options.config === undefined ? {} : { config: options.config }),
     ...(options.command === "query" || options.port === undefined ? {} : { port: options.port }),
     allowExternalValidator: options.command === "query" ? false : options.allowExternalValidator,
+    readOnly: options.command === "query" ? false : options.readOnly,
+    ...(options.command === "query" || options.trackingRef === undefined ? {} : { trackingRef: options.trackingRef }),
   });
 
   if (options.command === "query") {

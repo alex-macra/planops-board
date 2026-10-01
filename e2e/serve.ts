@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import path from "node:path";
 
-import { disposableDemo, removeDisposableDemo } from "../tests/fixture.ts";
+import { disposableDemo, git, removeDisposableDemo } from "../tests/fixture.ts";
 import {
   e2ePort,
   removeE2eFixtureState,
@@ -17,9 +17,17 @@ const repositoryRoot = await writeE2eFixtureState(createdRepositoryRoot, port).c
   await removeDisposableDemo(createdRepositoryRoot);
   throw error;
 });
+const readOnly = process.env["BOARD_E2E_READ_ONLY"] === "1";
+if (readOnly) {
+  const localHead = await git(repositoryRoot, "rev-parse", "HEAD");
+  await git(repositoryRoot, "commit", "--allow-empty", "-m", "Advance fetched PlanOps dev");
+  await git(repositoryRoot, "update-ref", "refs/remotes/origin/dev", "HEAD");
+  await git(repositoryRoot, "checkout", "--detach", localHead);
+}
 const child = spawn(
   process.execPath,
-  ["--import", "tsx", "cli/planops-board.ts", "dev", "--repo", repositoryRoot, "--port", String(port)],
+  ["--import", "tsx", "cli/planops-board.ts", "dev", "--repo", repositoryRoot, "--port", String(port),
+    ...(readOnly ? ["--read-only", "--tracking-ref", "refs/remotes/origin/dev"] : [])],
   { cwd: engineRoot, stdio: "inherit" },
 );
 const childExit = once(child, "exit") as Promise<[number | null, NodeJS.Signals | null]>;

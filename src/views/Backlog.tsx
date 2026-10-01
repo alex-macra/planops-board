@@ -1,5 +1,5 @@
 import { DataTable, type Column } from "../ui/index.tsx";
-import { GripVertical } from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical } from "lucide-react";
 import type { JSX } from "react";
 import { useCallback, useMemo } from "react";
 
@@ -64,6 +64,8 @@ function ReorderRow({
   task,
   workflow,
   projectLabel,
+  previousTask,
+  nextTask,
   onSelectTask,
   onOpenGraph,
   onShowInBacklog,
@@ -72,6 +74,8 @@ function ReorderRow({
   task: Task;
   workflow: Workflow;
   projectLabel: string;
+  previousTask: Task | null;
+  nextTask: Task | null;
   onSelectTask: (taskId: string) => void;
   onOpenGraph?: (taskId: string) => void;
   onShowInBacklog?: (taskId: string) => void;
@@ -96,6 +100,12 @@ function ReorderRow({
     onDrop: handleDrop,
   });
 
+  const moveAdjacent = (target: Task | null, direction: "up" | "down"): void => {
+    if (!target) return;
+    const line = targetLine(task.line, target.line, direction === "up" ? "top" : "bottom");
+    if (line !== null) onReorder(task, line);
+  };
+
   return (
     <tr
       ref={ref}
@@ -109,8 +119,20 @@ function ReorderRow({
         .join(" ")}
       data-testid={`row-${task.id}`}
     >
-      <td className="w-8 cursor-grab px-3 py-2 text-ui-text-subtle active:cursor-grabbing">
-        <GripVertical size={14} aria-hidden />
+      <td className="px-2 py-1 text-ui-text-subtle">
+        <div className="backlog-order-controls">
+          <GripVertical className="backlog-drag-handle" size={14} aria-hidden />
+          <div className="backlog-order-buttons">
+            <button type="button" className="backlog-reorder-button focus-ring" aria-label={`Move ${task.id} up`}
+              title="Move up one row" disabled={!previousTask} onClick={() => moveAdjacent(previousTask, "up")}>
+              <ArrowUp size={14} aria-hidden />
+            </button>
+            <button type="button" className="backlog-reorder-button focus-ring" aria-label={`Move ${task.id} down`}
+              title="Move down one row" disabled={!nextTask} onClick={() => moveAdjacent(nextTask, "down")}>
+              <ArrowDown size={14} aria-hidden />
+            </button>
+          </div>
+        </div>
       </td>
       <td className="px-3 py-2">
         <div className="flex items-center justify-between gap-2">
@@ -307,7 +329,7 @@ export function Backlog({
       <p className="tabular text-xs text-ui-text-subtle">
         {rows.length} of {board.tasks.length} tasks
         {reorderable
-          ? " · in ledger order; drag a row to move it in the Markdown"
+          ? " · in ledger order; drag or use the row buttons to reorder in Markdown"
           : " · filter to a single epic to reorder ledger rows"}
       </p>
 
@@ -322,7 +344,7 @@ export function Backlog({
           <table className="w-full border-collapse">
             <thead className="sticky top-0 border-b border-ui-border bg-ui-bg-muted text-left text-ui-text-subtle">
               <tr>
-                <th className="w-8 px-3 py-2" />
+                <th className="w-16 px-2 py-2"><span className="sr-only">Reorder</span></th>
                 <th className="px-3 py-2">ID</th>
                 <th className="px-3 py-2">Priority</th>
                 <th className="px-3 py-2">Status</th>
@@ -331,18 +353,26 @@ export function Backlog({
               </tr>
             </thead>
             <tbody>
-              {ordered.map((task) => (
-                <ReorderRow
-                  key={task.id}
-                  task={task}
-                  workflow={board.workflow}
-                  projectLabel={labelOf(task.project)}
-                  onSelectTask={onSelectTask}
-                  onOpenGraph={onOpenGraph}
-                  onShowInBacklog={onShowInBacklog}
-                  onReorder={onReorder}
-                />
-              ))}
+              {ordered.map((task, index) => {
+                const previous = ordered[index - 1];
+                const next = ordered[index + 1];
+                const sameSection = (candidate: Task | undefined): candidate is Task =>
+                  candidate !== undefined && candidate.file === task.file && candidate.section === task.section;
+                return (
+                  <ReorderRow
+                    key={task.id}
+                    task={task}
+                    workflow={board.workflow}
+                    projectLabel={labelOf(task.project)}
+                    previousTask={sameSection(previous) ? previous : null}
+                    nextTask={sameSection(next) ? next : null}
+                    onSelectTask={onSelectTask}
+                    onOpenGraph={onOpenGraph}
+                    onShowInBacklog={onShowInBacklog}
+                    onReorder={onReorder}
+                  />
+                );
+              })}
             </tbody>
           </table>
         </div>

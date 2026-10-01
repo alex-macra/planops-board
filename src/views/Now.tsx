@@ -5,6 +5,7 @@ import type { Board, LastChange, Task, Workflow } from "../api.ts";
 import { Pill } from "../components/Pill.tsx";
 import { TaskActions } from "../components/TaskActions.tsx";
 import { statusTone } from "../components/tone.ts";
+import { deliverySummaryHeadline } from "../../shared/delivery-summary.ts";
 import { buildNow, STALE_DAYS, type NowGroup, type NowRow } from "../now.ts";
 
 interface Props {
@@ -61,6 +62,11 @@ function Row({ row, workflow, lastChanged, carry, onMenuOpenChange, onSelectTask
           {row.note ? <span className="truncate">{row.note}</span> : null}
           <Pill tone={statusTone(task.statusBase, workflow)}>{task.statusBase ?? "no status"}</Pill>
         </span>
+        {task.deliverySummary ? (
+          <span className="now-row-delivery" title={`${deliverySummaryHeadline(task.deliverySummary)} · Next gate: ${task.deliverySummary.nextGate ?? "none recorded"}`}>
+            <span className="now-row-delivery-label">Delivery</span>{" · "}{deliverySummaryHeadline(task.deliverySummary)}{" · Next: "}{task.deliverySummary.nextGate ?? "none recorded"}
+          </span>
+        ) : null}
       </button>
       <TaskActions taskId={task.id} onOpenDetails={() => onSelectTask(task.id)}
         onOpenGraph={onOpenGraph && (() => onOpenGraph(task.id))}

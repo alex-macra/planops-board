@@ -6,6 +6,14 @@ export interface SourceIdentity {
   readonly sha: string;
 }
 
+export type TrackingRelation = "same" | "behind" | "ahead" | "diverged" | "unavailable";
+
+export interface SourceTrackingIdentity {
+  readonly ref: string;
+  readonly sha: string | null;
+  readonly relation: TrackingRelation;
+}
+
 function validateRef(ref: string): void {
   if (ref !== "HEAD" && !ref.startsWith("refs/heads/")) {
     throw new Error(`Git returned an unsupported source ref: ${ref}`);
@@ -43,4 +51,37 @@ export async function gitSourceIdentity(runtime: BoardRuntime): Promise<SourceId
     await runGitCommand(runtime.repositoryRoot, ["rev-parse", "--verify", revision])
   ).stdout.trim();
   return resolveSourceIdentity(readRef, readSha);
+}
+
+export async function gitSourceTrackingIdentity(
+  runtime: BoardRuntime,
+  source: SourceIdentity,
+): Promise<SourceTrackingIdentity | null> {
+  const ref = runtime.trackingRef;
+  if (ref === null) return null;
+
+  let sha: string;
+  try {
+    sha = (await runGitCommand(runtime.repositoryRoot, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])).stdout.trim();
+    validateSha(sha);
+  } catch {
+    return { ref, sha: null, relation: "unavailable" };
+  }
+  if (sha === source.sha) return { ref, sha, relation: "same" };
+
+  try {
+    const counts = (await runGitCommand(runtime.repositoryRoot, ["rev-list", "--left-right", "--count", `${source.sha}...${sha}`])).stdout.trim();
+    const match = /^(\d+)\s+(\d+)$/.exec(counts);
+    if (match === null) return { ref, sha, relation: "unavailable" };
+    const sourceOnly = Number(match[1]);
+    const trackingOnly = Number(match[2]);
+    const relation: TrackingRelation = sourceOnly === 0
+      ? "behind"
+      : trackingOnly === 0
+        ? "ahead"
+        : "diverged";
+    return { ref, sha, relation };
+  } catch {
+    return { ref, sha, relation: "unavailable" };
+  }
 }

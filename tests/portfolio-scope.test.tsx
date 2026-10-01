@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_WORKFLOW } from "../shared/config.ts";
 import * as api from "../src/api.ts";
 import * as state from "../src/state.ts";
+import type { SourceTracking } from "../shared/contracts.ts";
 import type { Board, Task } from "../src/api.ts";
 import { App } from "../src/App.tsx";
 
@@ -42,10 +43,11 @@ const writes = {
 
 let originalUrl: string, originalStorage: string | null, fetchSpy: ReturnType<typeof vi.spyOn>;
 
-function transport(board: Board = fixture()) {
-  vi.spyOn(api, "fetchSession").mockResolvedValue({ sourceRef: "fictional", sourceSha: "a".repeat(40), builtAt: "2026-08-20T12:00:00Z",
+function transport(board: Board = fixture(), readOnly = false, tracking: SourceTracking | null = null) {
+  vi.spyOn(api, "fetchSession").mockResolvedValue({ sourceRef: "fictional", sourceSha: "a".repeat(40), builtAt: "2026-08-20T12:00:00Z", readOnly,
+    tracking,
     capabilities: { history: false, liveEvents: false, localWrites: false } });
-  vi.spyOn(state, "useBoard").mockReturnValue({ board, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null,
+  vi.spyOn(state, "useBoard").mockReturnValue({ board, sourceRef: "fictional", sourceSha: "a".repeat(40), tracking, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null,
     writing: false, lastChanged: {}, live: "unsupported", behind: false, refreshedAt: null, checkedAt: null, reload: async () => true,
     ...writes, clearTouched: () => {} });
 }
@@ -64,9 +66,9 @@ afterEach(() => {
   if (originalStorage === null) localStorage.removeItem("projects-board.dark-mode"); else localStorage.setItem("projects-board.dark-mode", originalStorage);
 });
 
-function open(hash: string, board?: Board) {
+function open(hash: string, board?: Board, readOnly = false, tracking: SourceTracking | null = null) {
   window.history.replaceState(null, "", `/${hash}`);
-  transport(board);
+  transport(board, readOnly, tracking);
   return render(<App />);
 }
 const params = () => new URLSearchParams(window.location.hash.slice(1));
@@ -82,6 +84,31 @@ async function openRollupCard(name: string) {
 }
 
 describe("project scope and held filters", () => {
+  it("keeps a read-only source in viewer mode", async () => {
+    vi.spyOn(api, "fetchTaskHistory").mockResolvedValue({
+      file: "plans/moon.md", taskId: "ORB-001", entries: [], commitsScanned: 0,
+    });
+    open("#task=ORB-001", fixture(), true);
+    const drawer = await screen.findByRole("dialog", { name: /ORB-001/ });
+    expect(screen.getByText(/Read-only source fictional at/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Commit changes" })).not.toBeInTheDocument();
+    expect(within(drawer).queryByRole("combobox", { name: "Base state" })).not.toBeInTheDocument();
+    expect(within(drawer).queryByPlaceholderText("Add a note to the Markdown ledger")).not.toBeInTheDocument();
+    expect(screen.getByTestId("source-revision-status")).toHaveTextContent("Tracking ref not configured; freshness not confirmed");
+  });
+
+  it("shows a detached read clone behind its fetched tracking ref", async () => {
+    open("", fixture(), true, {
+      ref: "refs/remotes/origin/dev",
+      sha: "b".repeat(40),
+      relation: "behind",
+    });
+    await screen.findByTestId("source-revision-status");
+    expect(screen.getByTestId("source-revision-status")).toHaveTextContent("Read clone is behind fetched origin/dev");
+    expect(screen.getByText("Fetched origin/dev at")).toBeInTheDocument();
+    expect(screen.getByText("b".repeat(40))).toBeInTheDocument();
+  });
+
   it.each(VIEWS)("resets every row filter and the grouping when the rail selects a project from %s", async (view) => {
     open(`#view=${view}&project=orbit&q=ORB&priority=P1&status=Ready&readiness=startable&group=epic`);
     fireEvent.click(await screen.findByRole("button", { name: /Solar.*tasks/ }));

@@ -40,7 +40,7 @@ let originalUrl: string, originalStorage: string | null, fetchSpy: MockInstance<
 function transport(board: Board = fixture(), localWrites = false, lastChanged: Readonly<Record<string, LastChange>> = {}) {
   vi.spyOn(api, "fetchSession").mockResolvedValue({ sourceRef: "fictional", sourceSha: "a".repeat(40), builtAt: "2026-08-20T12:00:00Z",
     capabilities: { history: false, liveEvents: false, localWrites } });
-  vi.spyOn(state, "useBoard").mockReturnValue({ board, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null,
+  vi.spyOn(state, "useBoard").mockReturnValue({ board, sourceRef: "fictional", sourceSha: "a".repeat(40), tracking: null, git: null, loading: false, error: null, touched: [], pending: new Map(), undoable: null,
     writing: false, lastChanged, live: "unsupported", behind: false, refreshedAt: null, checkedAt: null, reload: async () => true,
     ...writes, clearTouched: () => {} });
 }

@@ -15,11 +15,18 @@ import { NoteError, planNote } from "./ledger/notes.ts";
 import { ConflictError, PatchError } from "./ledger/patch.ts";
 import { applyWrite, ForbiddenPathError, ValidationError } from "./ledger/write.ts";
 import type { BoardRuntime } from "./runtime.ts";
-import { gitSourceIdentity } from "./source-identity.ts";
+import { gitSourceIdentity, gitSourceTrackingIdentity } from "./source-identity.ts";
 
 export interface ApiResponse {
   readonly status: number;
   readonly body: unknown;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+const MUTATION_API_PATHS = new Set(["/api/write", "/api/note", "/api/git/commit"]);
+
+export function isMutationApiPath(pathname: string): boolean {
+  return MUTATION_API_PATHS.has(pathname);
 }
 
 const shaSchema = z.string().regex(/^[a-f0-9]{64}$/i, "must be a SHA-256 digest");
@@ -207,23 +214,45 @@ export async function handleApi(
   payload: unknown,
   query: URLSearchParams = new URLSearchParams(),
 ): Promise<ApiResponse> {
+  if (runtime.readOnly && isMutationApiPath(pathname)) {
+    return { status: 403, body: { error: "this Board server is read-only" } };
+  }
   if (method === "GET" && pathname === "/api/session") {
     const [board, source] = await Promise.all([
       loadBoard(runtime),
       gitSourceIdentity(runtime),
     ]);
+    const tracking = await gitSourceTrackingIdentity(runtime, source);
     return {
       status: 200,
       body: {
         sourceRef: source.ref,
         sourceSha: source.sha,
         builtAt: board.generatedAt,
-        capabilities: { history: true, liveEvents: true, localWrites: true },
+        readOnly: runtime.readOnly,
+        tracking,
+        capabilities: {
+          history: true,
+          liveEvents: true,
+          localWrites: !runtime.readOnly,
+        },
       },
     };
   }
   if (method === "GET" && pathname === "/api/board") {
-    return { status: 200, body: toBoardResponse(await loadBoard(runtime)) };
+    const [board, source] = await Promise.all([loadBoard(runtime), gitSourceIdentity(runtime)]);
+    const tracking = await gitSourceTrackingIdentity(runtime, source);
+    return {
+      status: 200,
+      body: toBoardResponse(board),
+      headers: {
+        "x-board-source-ref": source.ref,
+        "x-board-source-sha": source.sha,
+        "x-board-tracking-ref": tracking?.ref ?? "",
+        "x-board-tracking-sha": tracking?.sha ?? "",
+        "x-board-tracking-relation": tracking?.relation ?? "unconfigured",
+      },
+    };
   }
   if (method === "GET" && pathname === "/api/history") return handleHistory(runtime, query);
   if (method === "GET" && pathname === "/api/history/summary") {

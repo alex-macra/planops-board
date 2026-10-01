@@ -16,6 +16,7 @@ import {
   type GitStatusResponse,
   type LastChange,
   type Readiness,
+  type SourceTracking,
   type Task,
   type Workflow,
 } from "./api.ts";
@@ -170,6 +171,9 @@ type UndoEntry =
 
 export interface BoardState {
   readonly board: Board | null;
+  readonly sourceRef: string;
+  readonly sourceSha: string;
+  readonly tracking: SourceTracking | null;
   readonly git: GitStatusResponse | null;
   readonly loading: boolean;
   readonly error: string | null;
@@ -221,6 +225,9 @@ export interface BoardOptions {
 
 export function useBoard({ paused = false, session }: BoardOptions): BoardState {
   const [board, setBoard] = useState<Board | null>(null);
+  const [sourceRef, setSourceRef] = useState(session.sourceRef);
+  const [sourceSha, setSourceSha] = useState(session.sourceSha);
+  const [tracking, setTracking] = useState<SourceTracking | null>(session.tracking ?? null);
   const [git, setGit] = useState<GitStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -260,6 +267,9 @@ export function useBoard({ paused = false, session }: BoardOptions): BoardState 
         setBoard(boardResult.board);
         boardRef.current = boardResult.board;
       }
+      if (boardResult.sourceRef) setSourceRef(boardResult.sourceRef);
+      if (boardResult.sourceSha) setSourceSha(boardResult.sourceSha);
+      setTracking(boardResult.tracking);
       setGit(nextGit);
       setError(null);
       setCheckedAt(Date.now());
@@ -284,7 +294,7 @@ export function useBoard({ paused = false, session }: BoardOptions): BoardState 
   }, [reload]);
 
   useEffect(() => {
-    if (session.capabilities.liveEvents) return;
+    if (session.capabilities.liveEvents && !session.tracking) return;
     let stopped = false;
     let timer = 0;
     let delay = 60_000;
@@ -312,7 +322,7 @@ export function useBoard({ paused = false, session }: BoardOptions): BoardState 
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [reload, session.capabilities.liveEvents]);
+  }, [reload, session.capabilities.liveEvents, session.tracking]);
 
   /**
    * One write at a time. Two quick drags in the same document would otherwise
@@ -581,6 +591,9 @@ export function useBoard({ paused = false, session }: BoardOptions): BoardState 
 
   return {
     board,
+    sourceRef,
+    sourceSha,
+    tracking,
     git,
     loading,
     error,
