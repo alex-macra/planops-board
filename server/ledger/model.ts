@@ -13,6 +13,7 @@ import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../../shared/config.ts";
 import type { DataQualityIssueKind } from "../../shared/data-quality.ts";
 import { deliverySummaryFromFields, type DeliverySummary } from "../../shared/delivery-summary.ts";
 import { extractDetailBlocks, qwen3CoderNextPacketIsReady, type DetailBlock } from "./detail.ts";
+import { parseSubtasks, type Subtask } from "./subtasks.ts";
 import { extractTables, pythonStrip, type Table, type TableRow } from "./parse.ts";
 import {
   assessTaskExecution, boardRevision, missingQwenReadinessSource, qwenReadinessSummary,
@@ -86,6 +87,8 @@ export interface Task extends TaskExecutionAssessment {
   readonly file: string;
   readonly writable: boolean;
   readonly storyId: string | null;
+  /** Children of this task's `- **Subtasks:**` checklist; empty when it has none. */
+  readonly subtasks: readonly Subtask[];
   readonly qwen3CoderNextReady: boolean;
   readonly packetMetadata: TaskPacketMetadata;
   readonly epic: string;
@@ -373,7 +376,7 @@ export function buildBoard(
   const details: DetailBlock[] = [];
   const stories: Story[] = [];
   const drafts: (Omit<Task, "dependencies" | "dependencyResidue" | "readiness" | "deliverySummary" |
-    "title" | "storyId" | "qwen3CoderNextReady" | "packetMetadata" | keyof TaskExecutionAssessment> & {
+    "title" | "storyId" | "subtasks" | "qwen3CoderNextReady" | "packetMetadata" | keyof TaskExecutionAssessment> & {
     pending: ParsedDependencies;
   })[] = [];
 
@@ -684,6 +687,16 @@ export function buildBoard(
     }
     const localDetails = (detailsById.get(draft.id) ?? []).filter((block) => block.file === draft.file);
     const detail = uniqueIds.has(draft.id) && localDetails.length === 1 ? localDetails[0]! : null;
+    const subtaskParse = detail ? parseSubtasks(detail) : null;
+    for (const text of subtaskParse?.malformed ?? []) {
+      issues.push({
+        kind: "subtask-malformed",
+        taskId: draft.id,
+        file: draft.file,
+        line: detail!.headingLine,
+        detail: `subtask line is not \`[ ] ID title\`: ${JSON.stringify(text)}`,
+      });
+    }
     const ambiguity = !uniqueIds.has(draft.id)
       ? "task identity matches multiple ledger rows"
       : localDetails.length > 1 ? "task has multiple same-file detail blocks" : null;
@@ -718,6 +731,7 @@ export function buildBoard(
       ...rest,
       title: detail?.title ?? null,
       storyId,
+      subtasks: subtaskParse?.subtasks ?? [],
       qwen3CoderNextReady: detail !== null && qwen3CoderNextPacketIsReady(detail),
       packetMetadata,
       deliverySummary: detail === null ? null : deliverySummaryFromFields(detail.fields),

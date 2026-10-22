@@ -66,11 +66,20 @@ const qwenReadinessSummarySchema = z.object({
   manifestSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable(), error: z.string().max(500).nullable(),
 }).readonly();
 
+const subtaskSchema = z.object({
+  id: z.string(),
+  parentTaskId: z.string(),
+  title: z.string(),
+  done: z.boolean(),
+  owner: z.string().nullable(),
+}).readonly();
+
 const taskSchema = z.object({
   id: z.string(),
   file: z.string(),
   writable: z.boolean(),
   storyId: z.string().nullable(),
+  subtasks: z.array(subtaskSchema).readonly(),
   qwen3CoderNextReady: z.boolean(),
   packetMetadata: packetMetadataSchema,
   executionReadiness: executionReadinessSchema,
@@ -209,6 +218,7 @@ export type ProjectSummary = z.infer<typeof projectSummarySchema>;
 export type Readiness = z.infer<typeof readinessSchema>;
 export type Story = z.infer<typeof storySchema>;
 export type StoryKind = Story["kind"];
+export type Subtask = z.infer<typeof subtaskSchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type ExecutionReadiness = z.infer<typeof executionReadinessSchema>;
 export type WorkKind = z.infer<typeof workKindSchema>;
