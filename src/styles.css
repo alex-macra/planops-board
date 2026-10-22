@@ -1,6 +1,7 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.cjs";
+@source "../index.html";
+@source "./";
 
 /* Semantic theme tokens keep components independent from palette values. */
 
@@ -240,7 +241,7 @@ html.dark {
   }
 
   .source-freshness > summary {
-    @apply focus-ring flex min-h-8 cursor-pointer items-center py-1;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/60 focus-visible:ring-offset-1 focus-visible:ring-offset-ui-bg flex min-h-8 cursor-pointer items-center py-1;
   }
 
   .source-freshness > div {
@@ -448,7 +449,7 @@ html.dark {
   }
 
   .rollup-section-heading > span {
-    @apply tabular text-xs text-ui-text-subtle;
+    @apply tabular-nums text-xs text-ui-text-subtle;
   }
 
   .rollup-grid {
@@ -528,7 +529,7 @@ html.dark {
 
   .data-quality > summary > span:last-child,
   .rollup-disclosure > summary > span:last-child {
-    @apply tabular text-ui-text-subtle;
+    @apply tabular-nums text-ui-text-subtle;
   }
 
   .data-quality-mark {
@@ -624,7 +625,7 @@ html.dark {
   }
 
   .now-group-count {
-    @apply tabular ml-auto shrink-0 font-mono text-[11px] text-ui-text-subtle;
+    @apply tabular-nums ml-auto shrink-0 font-mono text-[11px] text-ui-text-subtle;
   }
 
   .now-row {
@@ -645,11 +646,11 @@ html.dark {
   }
 
   .now-row-id {
-    @apply mono truncate text-[11.5px] text-ui-accent;
+    @apply font-mono truncate text-[11.5px] text-ui-accent;
   }
 
   .now-row-priority {
-    @apply mono text-[10px] font-bold tracking-[0.03em] text-ui-text-subtle;
+    @apply font-mono text-[10px] font-bold tracking-[0.03em] text-ui-text-subtle;
   }
 
   .now-row-what {
@@ -657,7 +658,7 @@ html.dark {
   }
 
   .now-row-side {
-    @apply tabular flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-ui-text-subtle;
+    @apply tabular-nums flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-ui-text-subtle;
   }
 
   .now-row-delivery {
@@ -717,8 +718,8 @@ html.dark {
   .roadmap-project > summary { @apply bg-ui-bg-muted; }
   .roadmap-epic > summary { @apply bg-ui-bg-raised; }
   .roadmap-heading { @apply flex min-w-0 flex-1 flex-col gap-0.5 text-sm; }
-  .roadmap-count { @apply tabular text-xs text-ui-text-subtle; }
-  .roadmap-source { @apply mono block text-xs text-ui-text-subtle; }
+  .roadmap-count { @apply tabular-nums text-xs text-ui-text-subtle; }
+  .roadmap-source { @apply font-mono block text-xs text-ui-text-subtle; }
   .roadmap-body { @apply min-w-0 space-y-2 p-2; }
   .roadmap-outcome > summary { @apply items-start bg-ui-bg-raised; }
   .roadmap-outcome > summary > span { @apply min-w-0; }
@@ -739,7 +740,7 @@ html.dark {
   }
 
   .story-lane-head > span {
-    @apply tabular mono text-[11px] text-ui-text-subtle;
+    @apply tabular-nums font-mono text-[11px] text-ui-text-subtle;
   }
 
   .story-grid {
@@ -761,7 +762,7 @@ html.dark {
   }
 
   .story-card-id {
-    @apply mono text-[11px] text-ui-accent;
+    @apply font-mono text-[11px] text-ui-accent;
   }
 
   .story-kind {
@@ -786,7 +787,7 @@ html.dark {
   }
 
   .story-foot {
-    @apply tabular flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11.5px] text-ui-text-subtle;
+    @apply tabular-nums flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11.5px] text-ui-text-subtle;
   }
 
   .story-foot b {
@@ -977,6 +978,10 @@ html.dark {
 }
 
 @media (max-width: 639px) {
+  .app-header {
+    position: static;
+  }
+
   .app-header-main {
     align-items: flex-start;
   }

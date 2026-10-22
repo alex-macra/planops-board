@@ -1,8 +1,7 @@
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { glob, lstat, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
-import fastGlob from "fast-glob";
 
 import { parseBoardConfig, type BoardConfig } from "../shared/config.ts";
 import { runGitCommand } from "./git-command.ts";
@@ -210,14 +209,10 @@ async function discoverMarkdownFiles(
   exclude: readonly string[],
   options: { readonly allowEmpty?: boolean } = {},
 ): Promise<readonly string[]> {
-  const matches = await fastGlob([...patterns], {
-    cwd: root,
-    ignore: [...exclude],
-    onlyFiles: true,
-    dot: false,
-    followSymbolicLinks: false,
-    unique: true,
-  });
+  const matches: string[] = [];
+  for await (const entry of glob([...patterns], { cwd: root, exclude: [...exclude] })) {
+    if ((await lstat(path.join(root, entry))).isFile()) matches.push(entry);
+  }
   const documents = [...new Set(matches.map((entry) => entry.split(path.sep).join("/")))].sort();
   if (documents.length === 0 && options.allowEmpty !== true) {
     throw new RuntimeConfigError("the configured document globs did not match any Markdown files");

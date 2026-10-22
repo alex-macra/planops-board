@@ -93,7 +93,7 @@ describe("PlanOps Board CLI", () => {
     }
     expect(packageJson.scripts.prepack).toBe("npm run verify");
     expect(packageJson.scripts.verify).not.toMatch(/test:package|pack/);
-    for (const runtimeDependency of ["vite", "@vitejs/plugin-react-swc", "postcss", "autoprefixer", "tailwindcss"]) {
+    for (const runtimeDependency of ["vite", "@vitejs/plugin-react-swc", "postcss", "@tailwindcss/postcss", "tailwindcss"]) {
       expect(packageJson.dependencies).toHaveProperty(runtimeDependency);
       expect(packageJson.devDependencies).not.toHaveProperty(runtimeDependency);
     }
