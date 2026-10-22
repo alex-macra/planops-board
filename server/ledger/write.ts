@@ -12,11 +12,14 @@ import {
   discoverWritablePlanningDocuments,
 } from "../runtime.ts";
 import { sha256 } from "./corpus.ts";
+import { planAuthor, type AuthorOperation } from "./author.ts";
+import type { SourceDocument } from "./model.ts";
 import { acquireLedgerLock, type LockOptions } from "./lock.ts";
 import {
   ConflictError,
   insertLines,
   moveRow,
+  PatchError,
   patchCells,
   type CellEdit,
   type LineInsert,
@@ -48,6 +51,7 @@ export interface WriteRequest {
   readonly edits?: readonly CellEdit[];
   readonly move?: RowMove;
   readonly insert?: LineInsert;
+  readonly author?: AuthorOperation;
 }
 
 export interface WriteResult {
@@ -211,9 +215,22 @@ export async function applyWrite(
       }
 
       let updated = original;
-      if (request.edits?.length) updated = patchCells(updated, request.edits);
-      if (request.move) updated = moveRow(updated, request.move);
-      if (request.insert) updated = insertLines(updated, request.insert);
+      if (request.author) {
+        if (request.edits?.length || request.move || request.insert) {
+          throw new PatchError("authoring cannot be combined with a legacy edit");
+        }
+        const corpus: SourceDocument[] = await Promise.all(documents.map(async (file) => {
+          const text = file === request.file
+            ? original
+            : await readFile(await assertSafeRepositoryFile(runtime.repositoryRoot, file), "utf8");
+          return { path: file, text, sha256: sha256(text), writable: writableFiles.has(file) };
+        }));
+        updated = planAuthor(request.file, original, request.author, corpus, runtime.config.workflow);
+      } else {
+        if (request.edits?.length) updated = patchCells(updated, request.edits);
+        if (request.move) updated = moveRow(updated, request.move);
+        if (request.insert) updated = insertLines(updated, request.insert);
+      }
       if (updated === original) return { file: request.file, sha256: currentSha };
 
       let replacementOccurred = false;

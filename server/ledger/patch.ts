@@ -37,6 +37,17 @@ export interface LineInsert {
   readonly lines: readonly string[];
 }
 
+export interface LineReplace {
+  readonly line: number;
+  readonly expected: string;
+  readonly value: string;
+}
+
+export interface LineChanges {
+  readonly inserts: readonly LineInsert[];
+  readonly replacements: readonly LineReplace[];
+}
+
 function splitLines(text: string): string[] {
   return text.split("\n");
 }
@@ -152,6 +163,46 @@ export function insertLines(text: string, insert: LineInsert): string {
 
   lines.splice(insert.afterLine, 0, ...insert.lines);
   return lines.join("\n");
+}
+
+export function replaceLine(text: string, replacement: LineReplace): string {
+  const lines = splitLines(text);
+  const current = lines[replacement.line - 1];
+  if (current === undefined || current !== replacement.expected) {
+    throw new ConflictError(`line ${replacement.line} changed since it was planned`);
+  }
+  if (!contentLines(lines).some((entry) => entry.line === replacement.line)) {
+    throw new PatchError(`line ${replacement.line} is inside a fenced code block`);
+  }
+  if (/[\r\n]/.test(replacement.value) || CONFLICT_RE.test(replacement.value)) {
+    throw new PatchError("a replacement must be one non-conflict line");
+  }
+  lines[replacement.line - 1] = replacement.value;
+  return lines.join("\n");
+}
+
+export function applyLineChanges(text: string, changes: LineChanges): string {
+  const positions = [
+    ...changes.inserts.map((change) => change.afterLine),
+    ...changes.replacements.map((change) => change.line),
+  ];
+  if (new Set(positions).size !== positions.length) {
+    throw new PatchError("line changes must have distinct anchors");
+  }
+  for (const insert of changes.inserts) insertLines(text, insert);
+  for (const replacement of changes.replacements) replaceLine(text, replacement);
+
+  const ordered = [
+    ...changes.inserts.map((change) => ({ position: change.afterLine, kind: "insert" as const, change })),
+    ...changes.replacements.map((change) => ({ position: change.line, kind: "replace" as const, change })),
+  ].sort((left, right) => right.position - left.position);
+  let updated = text;
+  for (const item of ordered) {
+    updated = item.kind === "insert"
+      ? insertLines(updated, item.change)
+      : replaceLine(updated, item.change);
+  }
+  return updated;
 }
 
 /**

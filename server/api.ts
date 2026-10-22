@@ -54,6 +54,20 @@ const writeSchema = z
       context.addIssue({ code: "custom", message: "nothing to write" });
     }
   });
+const authorBase = { file: z.string().min(1), baseSha256: shaSchema };
+const plainLine = z.string().min(1);
+const authorSchema = z.discriminatedUnion("operation", [
+  z.object({ ...authorBase, operation: z.literal("create.story"), id: plainLine, title: plainLine,
+    outcome: plainLine, soThat: plainLine, kind: z.enum(["story", "enabler"]).optional(),
+    role: plainLine.optional(), demo: plainLine.optional() }).strict(),
+  z.object({ ...authorBase, operation: z.literal("create.task"), id: plainLine,
+    storyId: plainLine, title: plainLine, tableHeaderLine: z.number().int().positive(),
+    cells: z.record(z.string(), z.string()) }).strict(),
+  z.object({ ...authorBase, operation: z.literal("create.subtask"), taskId: plainLine,
+    id: plainLine, title: plainLine, owner: plainLine.optional() }).strict(),
+  z.object({ ...authorBase, operation: z.literal("toggle.subtask"), taskId: plainLine,
+    id: plainLine }).strict(),
+]);
 const noteSchema = z
   .object({
     file: z.string().min(1),
@@ -100,16 +114,30 @@ function writeFailure(error: unknown): ApiResponse {
 }
 
 async function handleWrite(runtime: BoardRuntime, payload: unknown): Promise<ApiResponse> {
-  const parsed = writeSchema.safeParse(payload);
-  if (!parsed.success) return badRequest(parsed.error);
+  const isAuthor = typeof payload === "object" && payload !== null && "operation" in payload;
+  const author = isAuthor ? authorSchema.safeParse(payload) : null;
+  const legacy = isAuthor ? null : writeSchema.safeParse(payload);
+  if (author && !author.success) return badRequest(author.error);
+  if (legacy && !legacy.success) return badRequest(legacy.error);
   try {
-    const request = parsed.data;
-    const result = await applyWrite(runtime, {
-      file: request.file,
-      baseSha256: request.baseSha256,
-      edits: request.edits ?? [],
-      ...(request.move == null ? {} : { move: request.move }),
-    });
+    let result;
+    if (author?.success) {
+      result = await applyWrite(runtime, {
+        file: author.data.file,
+        baseSha256: author.data.baseSha256,
+        author: author.data,
+      });
+    } else if (legacy?.success) {
+      const request = legacy.data;
+      result = await applyWrite(runtime, {
+        file: request.file,
+        baseSha256: request.baseSha256,
+        edits: request.edits ?? [],
+        ...(request.move == null ? {} : { move: request.move }),
+      });
+    } else {
+      return badRequest("nothing to write");
+    }
     forgetHistory();
     return { status: 200, body: result };
   } catch (error) {
