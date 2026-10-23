@@ -1001,6 +1001,10 @@ html.dark {
   }
 }
 
+.app-shell:has(form.roadmap-form) > .app-header {
+  position: static;
+}
+
 @media (max-width: 639px) {
   .app-header {
     position: static;

@@ -44,14 +44,15 @@ export function parseSubtasks(block: DetailBlock): SubtaskParse {
   const malformed: string[] = [];
   for (const item of items) {
     const groups = item.match(SUBTASK_LINE_RE)?.groups;
-    if (!groups) {
+    const title = groups?.["title"]?.trim() ?? "";
+    if (!groups || !groups["id"]!.startsWith(`${block.id}.`) || !title || /^\[@[^\]]+\]$/.test(title)) {
       malformed.push(item);
       continue;
     }
     subtasks.push({
       id: groups["id"]!,
       parentTaskId: block.id,
-      title: (groups["title"] ?? "").trim(),
+      title,
       done: groups["box"] !== " ",
       owner: groups["owner"] ? groups["owner"].trim() : null,
     });
