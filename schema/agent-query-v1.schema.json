@@ -142,7 +142,8 @@
             "story-member-unknown",
             "story-member-shared",
             "story-member-cross-file",
-            "story-member-unassigned"
+            "story-member-unassigned",
+            "subtask-malformed"
           ]
         },
         "taskId": { "type": "string" },

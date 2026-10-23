@@ -41,6 +41,7 @@ export type {
   SourceTracking,
   Story,
   StoryKind,
+  Subtask,
   Task,
   TaskHistory,
   Workflow,

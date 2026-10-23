@@ -1,7 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
-import fastGlob from "fast-glob";
 
 import { gitFingerprint, planningGitAllowlist } from "./git.ts";
 import { planningDocuments } from "./ledger/corpus.ts";
@@ -39,9 +38,12 @@ interface DocumentWatchRoot {
 
 function documentWatchRoots(runtime: BoardRuntime): DocumentWatchRoot[] {
   const byBase = new Map<string, boolean>();
-  for (const task of fastGlob.generateTasks(runtime.config.documents.include)) {
-    const relativePath = task.base === "." ? "" : task.base.split(path.sep).join("/");
-    const recursive = task.positive.some((pattern) => path.posix.dirname(pattern).includes("*"));
+  for (const pattern of runtime.config.documents.include) {
+    const segments = pattern.split("/");
+    const firstWildcard = segments.findIndex((segment) => segment.includes("*"));
+    const baseLength = firstWildcard === -1 ? segments.length - 1 : firstWildcard;
+    const relativePath = segments.slice(0, baseLength).join("/");
+    const recursive = segments.slice(baseLength, -1).some((segment) => segment.includes("*"));
     byBase.set(relativePath, (byBase.get(relativePath) ?? false) || recursive);
   }
 

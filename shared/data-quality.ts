@@ -17,6 +17,7 @@ export const DATA_QUALITY_ISSUE_KINDS = [
   "story-member-shared",
   "story-member-cross-file",
   "story-member-unassigned",
+  "subtask-malformed",
 ] as const;
 
 export const dataQualityIssueKindSchema = z.enum(DATA_QUALITY_ISSUE_KINDS);

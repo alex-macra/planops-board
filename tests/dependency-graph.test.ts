@@ -18,7 +18,7 @@ const dependency = (id: string, changes: Partial<Dependency> = {}): Dependency =
 
 function task(id: string, dependencies: readonly string[] = [], changes: Partial<Task> = {}): Task {
   return freeze({
-    id, file: "plans/fictional.md", writable: false, storyId: null, epic: "Fictional graph",
+    id, file: "plans/fictional.md", writable: false, storyId: null, subtasks: [], epic: "Fictional graph",
     section: null, title: id, line: 1, status: "Ready", statusBase: "Ready", statusQualifier: "",
     statusValid: true, priority: "P1", owners: [], repositories: [], project: "observatory", projects: [],
     dependencies: dependencies.map((id) => dependency(id)), dependencyResidue: [], outcome: "",
