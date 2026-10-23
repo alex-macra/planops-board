@@ -9,6 +9,97 @@ test.beforeEach(async () => {
   await resetBrowserRepository();
 });
 
+test("authors a story, linked task, two subtasks and one toggle through guarded Roadmap writes", async ({ page }) => {
+  const mutations: string[] = [];
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    requests.push(request.url());
+    if (request.method() !== "GET") mutations.push(request.url());
+  });
+  const readBoard = async () => {
+    const response = await page.request.get("/api/board");
+    expect(response.status()).toBe(200);
+    return boardSchema.parse(await response.json());
+  };
+  const save = async (form: Locator, expected: Record<string, unknown>) => {
+    const before = await readBoard();
+    const baseSha256 = before.documents.find((document) => document.path === "plans/moon-garden.md")!.sha256;
+    const responsePromise = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/write" && response.request().method() === "POST");
+    await form.getByRole("button", { name: "Save" }).click();
+    const response = await responsePromise;
+    expect(response.status(), await response.text()).toBe(200);
+    expect(response.request().postDataJSON()).toMatchObject({ file: "plans/moon-garden.md", baseSha256, ...expected });
+    return response;
+  };
+
+  await page.goto("/#view=stories&project=moon-garden");
+  await expect(page.getByRole("radio", { name: "Roadmap", exact: true })).toBeChecked();
+  const epic = page.getByRole("group", { name: "Epic plans/moon-garden.md in moon-garden" });
+  await epic.getByRole("button", { name: "Add story in plans/moon-garden.md" }).click();
+  const storyForm = page.getByRole("form", { name: "Create story in plans/moon-garden.md" });
+  await storyForm.getByLabel("Story ID").fill("MGA-S02");
+  await storyForm.getByLabel("Title").fill("Visitors compare habitats");
+  await storyForm.getByLabel("Outcome").fill("I can compare habitats");
+  await storyForm.getByLabel("So that").fill("I choose a suitable garden");
+  await save(storyForm, { operation: "create.story", id: "MGA-S02", title: "Visitors compare habitats",
+    outcome: "I can compare habitats", soThat: "I choose a suitable garden" });
+  let outcome = page.getByRole("group", { name: /^Story MGA-S02 from plans\/moon-garden\.md line / });
+  await expect(outcome).toBeVisible();
+  await outcome.locator(":scope > summary").click();
+  await outcome.getByRole("button", { name: "Add task to MGA-S02" }).click();
+  const taskForm = page.getByRole("form", { name: "Create task for MGA-S02" });
+  await taskForm.getByLabel("Task ID").fill("MGA-004");
+  await taskForm.getByLabel("Title").fill("Compare habitat requirements");
+  await taskForm.getByLabel("Priority").selectOption("P1");
+  await taskForm.getByLabel("Status").selectOption("Ready");
+  await taskForm.getByLabel("Dependencies").fill("None");
+  await taskForm.getByLabel("Repository / owner").fill("moon-garden-ui");
+  await taskForm.getByLabel("Required outcome").fill("Visitors compare habitats.");
+  const table = (await readBoard()).taskTables.find((candidate) => candidate.file === "plans/moon-garden.md")!;
+  await save(taskForm, { operation: "create.task", id: "MGA-004", storyId: "MGA-S02",
+    title: "Compare habitat requirements", tableHeaderLine: table.headerLine,
+    cells: { Priority: "P1", Status: "Ready", Dependencies: "None", "Repository / owner": "moon-garden-ui",
+      "Required outcome": "Visitors compare habitats." } });
+  outcome = page.getByRole("group", { name: "Project Moon Garden" })
+    .getByRole("group", { name: /^Story MGA-S02 from plans\/moon-garden\.md line / });
+  await expect(outcome).toBeAttached();
+  if (!(await outcome.evaluate((element) => (element as HTMLDetailsElement).open))) {
+    await outcome.locator(":scope > summary").click();
+  }
+  await expect(outcome.getByText("Compare habitat requirements")).toBeVisible();
+
+  for (const [id, title] of [["MGA-004.1", "Inspect habitat light"], ["MGA-004.2", "Check garden temperature"]] as const) {
+    await outcome.getByRole("button", { name: "Add subtask to MGA-004" }).click();
+    const form = page.getByRole("form", { name: "Create subtask for MGA-004" });
+    await form.getByLabel("Subtask ID").fill(id);
+    await form.getByLabel("Title").fill(title);
+    await save(form, { operation: "create.subtask", taskId: "MGA-004", id, title });
+    await expect(outcome.getByRole("checkbox", { name: `${id} ${title}` })).not.toBeChecked();
+  }
+  const first = outcome.getByRole("checkbox", { name: "MGA-004.1 Inspect habitat light" });
+  const second = outcome.getByRole("checkbox", { name: "MGA-004.2 Check garden temperature" });
+  const beforeToggle = await readBoard();
+  const baseSha256 = beforeToggle.documents.find((document) => document.path === "plans/moon-garden.md")!.sha256;
+  const toggleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/write" && response.request().method() === "POST");
+  await first.click();
+  const toggled = await toggleResponse;
+  expect(toggled.status(), await toggled.text()).toBe(200);
+  expect(toggled.request().postDataJSON()).toMatchObject({ operation: "toggle.subtask", file: "plans/moon-garden.md",
+    baseSha256, taskId: "MGA-004", id: "MGA-004.1" });
+  await expect(first).toBeChecked();
+  await expect(second).not.toBeChecked();
+  const final = await readBoard();
+  expect(final.stories.find((entry) => entry.id === "MGA-S02")?.taskIds).toEqual(["MGA-004"]);
+  expect(final.tasks.find((entry) => entry.id === "MGA-004")?.storyId).toBe("MGA-S02");
+  expect(final.tasks.find((entry) => entry.id === "MGA-004")?.subtasks).toMatchObject([
+    { id: "MGA-004.1", done: true }, { id: "MGA-004.2", done: false },
+  ]);
+  expect(mutations).toEqual(Array(5).fill(new URL("/api/write", page.url()).href));
+  expect(requests.filter((url) => /\/(?:api\/git\/commit|api\/(?:agent|model)|v1\/(?:chat\/completions|responses)|models)(?:\/|$)/i
+    .test(new URL(url).pathname))).toEqual([]);
+});
+
 test("edits, undoes, annotates, branches, and commits a fictional task", async ({ page }) => {
   const foreign = await page.request.get("/api/session", {
     headers: { Origin: "https://example.invalid" },

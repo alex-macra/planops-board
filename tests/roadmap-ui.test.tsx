@@ -148,6 +148,99 @@ describe("inline roadmap authoring", () => {
       task("ORB-002"), task("SUN-001", { project: "sun", projects: ["sun"] })] });
   const openStory = () => toggle(group("Story ORB-S01 from plans/moon.md line 10"), true);
 
+  it("shows a confirmed story, linked task, two subtasks and one toggle only after each refresh", async () => {
+    let confirm: () => void = () => { throw new Error("No write is pending"); };
+    const messages = vi.fn();
+    const onAuthor = vi.fn(async (_file: string, operation: api.AuthorOperation) => new Promise<boolean>((resolve) => {
+      confirm = () => {
+        setBoard((current) => {
+          const revision = String.fromCharCode(current.revision.charCodeAt(0) + 1).repeat(64);
+          if (operation.operation === "create.story") return { ...current, revision,
+            stories: [...current.stories, story(operation.id, [], { title: operation.title, outcome: operation.outcome,
+              soThat: operation.soThat, role: operation.role ?? null })] };
+          if (operation.operation === "create.task") return { ...current, revision,
+            stories: current.stories.map((entry) => entry.id === operation.storyId ? { ...entry, taskIds: [...entry.taskIds, operation.id] } : entry),
+            tasks: [...current.tasks, task(operation.id, { title: operation.title, storyId: operation.storyId,
+              status: operation.cells["Status"] ?? "Ready", statusBase: operation.cells["Status"] ?? "Ready" })] };
+          return { ...current, revision, tasks: current.tasks.map((entry) => entry.id === operation.taskId ? { ...entry,
+            subtasks: operation.operation === "create.subtask"
+              ? [...entry.subtasks, { id: operation.id, parentTaskId: entry.id, title: operation.title,
+                owner: operation.owner ?? null, done: false }]
+              : entry.subtasks.map((subtask) => subtask.id === operation.id ? { ...subtask, done: !subtask.done } : subtask),
+          } : entry) };
+        });
+        resolve(true);
+      };
+    }));
+    let setBoard!: (updater: (current: Board) => Board) => void;
+    function Harness() {
+      const [board, update] = useState<Board>(writable);
+      setBoard = update;
+      return <Stories {...props(board)} editable onAuthor={onAuthor} onRefresh={async () => true} onMessage={messages} />;
+    }
+    render(<Harness />);
+    const accept = async () => { act(() => confirm()); await waitFor(() => expect(onAuthor).toHaveBeenCalledTimes(messages.mock.calls.length)); };
+
+    fireEvent.click(within(group("Epic plans/moon.md in orbit")).getByRole("button", { name: "Add story in plans/moon.md" }));
+    const storyForm = screen.getByRole("form", { name: "Create story in plans/moon.md" });
+    fireEvent.change(within(storyForm).getByLabelText("Story ID"), { target: { value: "ORB-S03" } });
+    fireEvent.change(within(storyForm).getByLabelText("Title"), { target: { value: "Observe the dawn" } });
+    fireEvent.change(within(storyForm).getByLabelText("Outcome"), { target: { value: "I can observe the dawn" } });
+    fireEvent.change(within(storyForm).getByLabelText("So that"), { target: { value: "I can choose a clear sky" } });
+    fireEvent.click(within(storyForm).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onAuthor).toHaveBeenCalledExactlyOnceWith("plans/moon.md", {
+      operation: "create.story", id: "ORB-S03", title: "Observe the dawn", kind: "story",
+      outcome: "I can observe the dawn", soThat: "I can choose a clear sky",
+    }));
+    expect(screen.queryByRole("group", { name: /^Story ORB-S03/ })).not.toBeInTheDocument();
+    await accept();
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Create story in plans/moon.md" })).not.toBeInTheDocument());
+    let outcome = group("Story ORB-S03 from plans/moon.md line 10");
+    toggle(outcome, true);
+    fireEvent.click(within(outcome).getByRole("button", { name: "Add task to ORB-S03" }));
+    const taskForm = screen.getByRole("form", { name: "Create task for ORB-S03" });
+    fireEvent.change(within(taskForm).getByLabelText("Task ID"), { target: { value: "ORB-003" } });
+    fireEvent.change(within(taskForm).getByLabelText("Title"), { target: { value: "Map the dawn" } });
+    fireEvent.change(within(taskForm).getByLabelText("Status"), { target: { value: "Ready" } });
+    fireEvent.click(within(taskForm).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onAuthor).toHaveBeenCalledTimes(2));
+    expect(onAuthor).toHaveBeenNthCalledWith(2, "plans/moon.md", { operation: "create.task", id: "ORB-003",
+      storyId: "ORB-S03", title: "Map the dawn", tableHeaderLine: 14,
+      cells: { Priority: "", Status: "Ready", Dependencies: "", "Repository / owner": "", "Required outcome": "" } });
+    expect(within(outcome).queryByText("ORB-003")).not.toBeInTheDocument();
+    await accept();
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Create task for ORB-S03" })).not.toBeInTheDocument());
+    outcome = group("Story ORB-S03 from plans/moon.md line 10");
+    expect(within(outcome).getByText("Map the dawn")).toBeVisible();
+
+    for (const [index, title] of [[1, "Record sunrise"], [2, "Check horizon"]] as const) {
+      fireEvent.click(within(outcome).getByRole("button", { name: "Add subtask to ORB-003" }));
+      const form = screen.getByRole("form", { name: "Create subtask for ORB-003" });
+      fireEvent.change(within(form).getByLabelText("Subtask ID"), { target: { value: `ORB-003.${index}` } });
+      fireEvent.change(within(form).getByLabelText("Title"), { target: { value: title } });
+      fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(onAuthor).toHaveBeenCalledTimes(2 + index));
+      expect(onAuthor).toHaveBeenNthCalledWith(2 + index, "plans/moon.md", { operation: "create.subtask",
+        taskId: "ORB-003", id: `ORB-003.${index}`, title });
+      expect(within(outcome).queryByRole("checkbox", { name: new RegExp(`ORB-003\\.${index} ${title}`) })).not.toBeInTheDocument();
+      await accept();
+      await waitFor(() => expect(form).not.toBeInTheDocument());
+      expect(within(outcome).getByRole("checkbox", { name: new RegExp(`ORB-003\\.${index} ${title}`) })).not.toBeChecked();
+    }
+    const first = within(outcome).getByRole("checkbox", { name: /ORB-003\.1 Record sunrise/ });
+    const second = within(outcome).getByRole("checkbox", { name: /ORB-003\.2 Check horizon/ });
+    fireEvent.click(first);
+    await waitFor(() => expect(onAuthor).toHaveBeenCalledTimes(5));
+    expect(onAuthor).toHaveBeenNthCalledWith(5, "plans/moon.md", { operation: "toggle.subtask",
+      taskId: "ORB-003", id: "ORB-003.1" });
+    expect(first).not.toBeChecked();
+    expect(second).not.toBeChecked();
+    await accept();
+    await waitFor(() => expect(first).toBeChecked());
+    expect(second).not.toBeChecked();
+    expect(messages).toHaveBeenCalledTimes(5);
+  });
+
   it("offers an explicit writable file when no story lane exists", () => {
     const board = { ...writable(), stories: [] };
     const onAuthor = vi.fn(async () => true);

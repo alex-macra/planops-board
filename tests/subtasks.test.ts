@@ -40,6 +40,23 @@ describe("subtask checklist parsing", () => {
     expect(parse(["- **Subtasks:**", "  - [X] POB-AUTH-003.1 Done"]).subtasks[0]?.done).toBe(true);
   });
 
+  it("reports a checklist ID under the wrong parent instead of attaching it", () => {
+    const result = parse(["- **Subtasks:**", "  - [ ] POB-AUTH-004.1 Belongs to another task"]);
+    expect(result).toEqual({ subtasks: [], malformed: ["[ ] POB-AUTH-004.1 Belongs to another task"] });
+    const board = boardWith(["- **Subtasks:**", "  - [ ] POB-AUTH-004.1 Belongs to another task"]);
+    expect(board.tasks.find((candidate) => candidate.id === "POB-AUTH-003")?.subtasks).toEqual([]);
+    expect(board.issues).toContainEqual(expect.objectContaining({ kind: "subtask-malformed", taskId: "POB-AUTH-003" }));
+  });
+
+  it.each(["  - [ ] POB-AUTH-003.1", "  - [ ] POB-AUTH-003.1 [@alex]"])
+  ("reports a missing title in %s as malformed", (line) => {
+    const result = parse(["- **Subtasks:**", line]);
+    expect(result).toEqual({ subtasks: [], malformed: [line.trim().replace(/^- /, "")] });
+    const board = boardWith(["- **Subtasks:**", line]);
+    expect(board.tasks.find((candidate) => candidate.id === "POB-AUTH-003")?.subtasks).toEqual([]);
+    expect(board.issues).toContainEqual(expect.objectContaining({ kind: "subtask-malformed", taskId: "POB-AUTH-003" }));
+  });
+
   it("reports a malformed line instead of dropping it, and counts the rest", () => {
     const { subtasks, malformed } = parse([
       "- **Subtasks:**",
