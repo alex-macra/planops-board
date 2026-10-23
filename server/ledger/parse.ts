@@ -1,4 +1,5 @@
 /** Markdown table extraction with byte offsets for guarded cell edits. */
+import { TASK_ID_HEADERS } from "./statuses.ts";
 
 const FENCE_RE = /^ {0,3}(?<marker>`{3,}|~{3,})(?<rest>.*)$/;
 const HEADING_RE = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
@@ -37,6 +38,21 @@ export interface Table {
   readonly headerLine: number | null;
   readonly section: string | null;
   readonly rows: readonly TableRow[];
+}
+
+const AUTHOR_COLUMNS = new Set([
+  "Priority", "Severity", "Severity/risk", "Status", "Dependencies",
+  "Repository / owner", "Owner repositories", "Owner repository or function",
+  "Owning repo", "Owners", "Owner", "Repository", "Required outcome",
+  "Outcome", "Definition of done", "Behaviour that must survive",
+  "Removed surface", "Recommendation",
+]);
+
+export function eligibleTaskTable(table: Table): boolean {
+  return table.headerLine !== null && table.header.length > 1 && TASK_ID_HEADERS.has(table.header[0] ?? "") &&
+    new Set(table.header).size === table.header.length &&
+    table.header.slice(1).every((name) => AUTHOR_COLUMNS.has(name)) &&
+    table.rows.every((row) => row.cells.length === table.header.length);
 }
 
 /**
@@ -257,11 +273,10 @@ export function extractTables(lines: readonly string[]): Table[] {
       cursor += 1;
     }
 
-    const firstLine = rows[0]?.line ?? null;
     tables.push({
       header: header.cells,
-      headerLine: firstLine === null ? null : firstLine - 2,
-      section: firstLine === null ? null : enclosingSection(sections, firstLine),
+      headerLine: headerEntry.line,
+      section: enclosingSection(sections, headerEntry.line),
       rows,
     });
     index = cursor;

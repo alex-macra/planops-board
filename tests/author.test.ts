@@ -56,6 +56,42 @@ afterEach(async () => {
 });
 
 describe("guarded authoring", () => {
+  it("publishes eligible table coordinates and accepts the first row of an empty table", async () => {
+    const { runtime, absolute } = await fixture();
+    const original = await readFile(absolute, "utf8");
+    const single = await loadBoard(runtime);
+    expect(single.taskTables.filter((entry) => entry.file === file)).toEqual([{
+      file, headerLine: 14,
+      headers: ["ID", "Priority", "Status", "Dependencies", "Repository / owner", "Required outcome"],
+    }]);
+
+    const empty = [
+      "## Additional task table",
+      "| ID | Priority | Status | Dependencies | Repository / owner | Required outcome |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "",
+      "## Unsupported table",
+      "| ID | Surprise |",
+      "| --- | --- |",
+      "",
+    ].join("\n");
+    await writeFile(absolute, original.replace("## Stories", `${empty}## Stories`));
+    const withTables = await loadBoard(runtime);
+    const choices = withTables.taskTables.filter((entry) => entry.file === file);
+    expect(choices).toHaveLength(2);
+    const second = choices.find((entry) => entry.headerLine !== 14)!;
+    expect(second.headers).toEqual(choices[0]?.headers);
+    const baseSha256 = withTables.documents.find((entry) => entry.path === file)!.sha256;
+    const created = await applyWrite(runtime, { file, baseSha256, author: { ...task, id: "MGA-004", tableHeaderLine: second.headerLine } });
+    const after = await readFile(absolute, "utf8");
+    expect(after).toContain("| --- | --- | --- | --- | --- | --- |\n| `MGA-004` | P1 | Ready | None | moon-garden-ui | Visitors compare habitats. |");
+    expect(created.sha256).toBe((await loadBoard(runtime)).documents.find((entry) => entry.path === file)?.sha256);
+    expect((await loadBoard(runtime)).tasks.find((entry) => entry.id === "MGA-004")?.storyId).toBe("MGA-S01");
+
+    await writeFile(absolute, original.replace("| ID |", "| Not ID |"));
+    expect((await loadBoard(runtime)).taskTables.filter((entry) => entry.file === file)).toEqual([]);
+  });
+
   it("creates a parseable story and refuses missing sentence fields", async () => {
     const { runtime, absolute, baseSha256 } = await fixture();
     const before = await readFile(absolute, "utf8");

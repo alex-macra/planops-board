@@ -110,6 +110,7 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
     setPriority,
     moveRow,
     addNote,
+    author,
     undo,
     clearTouched,
   } = useBoard({ paused: dragging, session });
@@ -674,7 +675,13 @@ function Board({ session }: { readonly session: BoardSession }): JSX.Element {
                 board={board}
                 tasks={scopedTasks}
                 onSelectStory={(story) => setQuery({ story }, "push")}
+                onSelectTask={openTask}
                 onOpenBacklog={() => openView("backlog")}
+                editable={session.capabilities.localWrites}
+                onAuthor={author}
+                onRefresh={reload}
+                onSetStatus={setStatus}
+                onMessage={(message, kind) => { toast(message, kind); setAnnouncement(message); }}
               />
             ) : null}
             {view === "rollup" ? (
