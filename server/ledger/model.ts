@@ -14,7 +14,7 @@ import type { DataQualityIssueKind } from "../../shared/data-quality.ts";
 import { deliverySummaryFromFields, type DeliverySummary } from "../../shared/delivery-summary.ts";
 import { extractDetailBlocks, qwen3CoderNextPacketIsReady, type DetailBlock } from "./detail.ts";
 import { parseSubtasks, type Subtask } from "./subtasks.ts";
-import { extractTables, pythonStrip, type Table, type TableRow } from "./parse.ts";
+import { eligibleTaskTable, extractTables, pythonStrip, type Table, type TableRow } from "./parse.ts";
 import {
   assessTaskExecution, boardRevision, missingQwenReadinessSource, qwenReadinessSummary,
   taskPacketMetadata, type QwenReadinessSource, type QwenReadinessSummary,
@@ -153,6 +153,7 @@ export interface Board {
   readonly revision: string;
   readonly qwenReadiness: QwenReadinessSummary;
   readonly documents: readonly DocumentSummary[];
+  readonly taskTables: readonly { readonly file: string; readonly headerLine: number; readonly headers: readonly string[] }[];
   readonly projects: readonly ProjectSummary[];
   readonly tasks: readonly Task[];
   /** Detail blocks stay separate because not every task has one. */
@@ -371,6 +372,7 @@ export function buildBoard(
   qwenSource: QwenReadinessSource = missingQwenReadinessSource(),
 ): Board {
   const summaries: DocumentSummary[] = [];
+  const taskTables: Board["taskTables"][number][] = [];
   const findings: Finding[] = [];
   const issues: DataQualityIssue[] = [];
   const details: DetailBlock[] = [];
@@ -384,6 +386,11 @@ export function buildBoard(
     const writable = document.writable !== false;
     const lines = document.text.split("\n");
     const tables = extractTables(lines);
+    for (const table of tables) {
+      if (eligibleTaskTable(table)) {
+        taskTables.push({ file: document.path, headerLine: table.headerLine!, headers: table.header });
+      }
+    }
     const vocabulary = documentVocabulary(tables, workflow.statusOrder);
     const epic = lines.find((line) => line.startsWith("# "))?.slice(2).trim() ?? document.path;
 
@@ -767,6 +774,7 @@ export function buildBoard(
     revision: boardRevision(planRevision, qwenSource),
     qwenReadiness: qwenReadinessSummary(qwenSource),
     documents: summaries,
+    taskTables,
     projects: summariseProjects(tasks, projectDefinitions),
     tasks,
     details,

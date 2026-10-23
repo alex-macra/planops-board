@@ -47,6 +47,11 @@ describe("fictional demo board", () => {
       expect(parsed.data.documents.every((document) => document.writable)).toBe(true);
       expect(parsed.data.tasks.every((task) => task.executionReadiness === "unassessed")).toBe(true);
       expect(parsed.data.qwenReadiness.status).toBe("missing");
+      expect(parsed.data.taskTables.map((table) => [table.file, table.headerLine])).toEqual([
+        ["plans/moon-garden.md", 14],
+        ["plans/shared-observatory.md", 15],
+        ["plans/signal-harbor.md", 14],
+      ]);
     }
   });
 

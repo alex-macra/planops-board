@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_WORKFLOW } from "../shared/config.ts";
 import * as api from "../src/api.ts";
@@ -26,6 +27,7 @@ function fixture(): Board {
   return { generatedAt: "2026-08-20T12:00:00Z", revision: "a".repeat(64), planRevision: "a".repeat(64), workflow: DEFAULT_WORKFLOW,
     qwenReadiness: { status: "missing", schemaVersion: null, auditBaseCommit: null, capturedAt: null, candidateCount: 0, manifestSha256: null, error: null },
     tasks: [task("ORB-001"), task("ORB-002"), task("SUN-001", { project: "sun", projects: ["sun"] })],
+    taskTables: [],
     stories: [story("ORB-S01", ["ORB-001"]), story("ORB-S02", ["ORB-002"], { file: "plans/star.md", kind: "enabler", role: null }), story("SUN-S01", ["SUN-001"])],
     documents: ["plans/moon.md", "plans/star.md"].map((path) => ({ path, title: "Shared sky", writable: true, sha256: "a".repeat(64), taskCount: 999,
       vocabulary: { bases: DEFAULT_WORKFLOW.statusOrder, source: "configured" } })),
@@ -48,7 +50,7 @@ describe("scoped roadmap hierarchy", () => {
     expect(summary(epics[0]!)).toHaveTextContent("Shared sky"); expect(summary(epics[1]!)).toHaveTextContent("Shared sky");
     const outcome = within(epics[0]!).getByRole("group", { name: /^Story ORB-S01/ });
     for (const text of ["story", "As a observer", "Observe ORB-S01", "Full group: 0 of 1 complete", "in flight", "next ORB-001"]) expect(summary(outcome)).toHaveTextContent(text);
-    expect(outcome).not.toHaveAttribute("open"); expect(within(outcome).getByRole("button")).not.toBeVisible();
+    expect(outcome).not.toHaveAttribute("open"); expect(within(outcome).getByRole("button", { name: /^Open story ORB-S01/ })).not.toBeVisible();
     toggle(outcome, true); fireEvent.click(within(outcome).getByRole("button", { name: /^Open story ORB-S01/ }));
     expect(onSelectStory).toHaveBeenCalledExactlyOnceWith("ORB-S01");
     expect(screen.getByText(/3 stories over 3 of 3 rows/)).toBeVisible(); expect(group("Project Solar")).toBeVisible();
@@ -134,6 +136,210 @@ describe("scoped roadmap hierarchy", () => {
   it("explains an empty scope without fabricating groups", () => {
     render(<Stories {...props(fixture(), [])} />); expect(screen.queryAllByRole("group")).toHaveLength(0);
     expect(screen.getByText(/No story blocks in this scope yet/)).toBeVisible(); expect(screen.getByText(/0 stories over 0 of 0 rows/)).toBeVisible();
+  });
+});
+
+describe("inline roadmap authoring", () => {
+  const table = { file: "plans/moon.md", headerLine: 14,
+    headers: ["ID", "Priority", "Status", "Dependencies", "Repository / owner", "Required outcome"] };
+  const writable = () => ({ ...fixture(), taskTables: [table],
+    tasks: [task("ORB-001", { storyId: "ORB-S01", statusCell: { file: "plans/moon.md", line: 16, column: 2 },
+      subtasks: [{ id: "ORB-001.1", parentTaskId: "ORB-001", title: "Inspect the moon", owner: "alex", done: false }] }),
+      task("ORB-002"), task("SUN-001", { project: "sun", projects: ["sun"] })] });
+  const openStory = () => toggle(group("Story ORB-S01 from plans/moon.md line 10"), true);
+
+  it("offers an explicit writable file when no story lane exists", () => {
+    const board = { ...writable(), stories: [] };
+    const onAuthor = vi.fn(async () => true);
+    render(<Stories {...props(board)} editable onAuthor={onAuthor} />);
+    expect(screen.queryByRole("group", { name: /^Epic/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Add story/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Story file"), { target: { value: "plans/moon.md" } });
+    expect(screen.getByRole("button", { name: "Add story in plans/moon.md" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add story in plans/star.md" })).not.toBeInTheDocument();
+  });
+
+  it("refuses blank story sentence fields, then sends one explicit story operation and restores focus", async () => {
+    const onAuthor = vi.fn(async () => true);
+    render(<Stories {...props(writable())} editable onAuthor={onAuthor} onRefresh={async () => true} />);
+    const trigger = within(group("Epic plans/moon.md in orbit")).getByRole("button", { name: "Add story in plans/moon.md" });
+    fireEvent.click(trigger);
+    const form = screen.getByRole("form", { name: "Create story in plans/moon.md" });
+    fireEvent.change(within(form).getByLabelText("Story ID"), { target: { value: "ORB-S03" } });
+    fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Observe the dawn" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    expect(within(form).getByText("Outcome is required.")).toBeVisible();
+    expect(within(form).getByText("So that is required.")).toBeVisible();
+    expect(onAuthor).not.toHaveBeenCalled();
+    fireEvent.change(within(form).getByLabelText("Outcome"), { target: { value: "I can compare the dawn" } });
+    fireEvent.change(within(form).getByLabelText("So that"), { target: { value: "I choose a route" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onAuthor).toHaveBeenCalledExactlyOnceWith("plans/moon.md", {
+      operation: "create.story", id: "ORB-S03", title: "Observe the dawn", kind: "story",
+      outcome: "I can compare the dawn", soThat: "I choose a route",
+    }));
+    await waitFor(() => expect(form).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole("group", { name: /^Story ORB-S03/ })).not.toBeInTheDocument();
+  });
+
+  it("requires a file-local table choice and preserves task input after a server conflict", async () => {
+    const board = { ...writable(), taskTables: [table, { ...table, headerLine: 30 }] };
+    const onAuthor = vi.fn().mockRejectedValueOnce(new api.ApiError(409, { error: "Document changed", kind: "conflict" })).mockResolvedValueOnce(true);
+    const onRefresh = vi.fn(async () => true);
+    render(<Stories {...props(board)} editable onAuthor={onAuthor} onRefresh={onRefresh} />);
+    openStory();
+    fireEvent.click(screen.getByRole("button", { name: "Add task to ORB-S01" }));
+    const form = screen.getByRole("form", { name: "Create task for ORB-S01" });
+    fireEvent.change(within(form).getByLabelText("Task ID"), { target: { value: "ORB-003" } });
+    fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Review skyline" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    expect(within(form).getByText("Choose a task table.")).toBeVisible();
+    expect(onAuthor).not.toHaveBeenCalled();
+    fireEvent.change(within(form).getByLabelText("Task table in plans/moon.md for ORB-S01"), { target: { value: "30" } });
+    fireEvent.change(within(form).getByLabelText("Priority"), { target: { value: "P1" } });
+    fireEvent.change(within(form).getByLabelText("Status"), { target: { value: "Ready" } });
+    fireEvent.change(within(form).getByLabelText("Dependencies"), { target: { value: "None" } });
+    fireEvent.change(within(form).getByLabelText("Repository / owner"), { target: { value: "observatory-ui" } });
+    fireEvent.change(within(form).getByLabelText("Required outcome"), { target: { value: "Review skyline" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(within(form).getByText("Document changed")).toBeVisible());
+    expect(within(form).getByLabelText("Task ID")).toHaveValue("ORB-003");
+    expect(onAuthor).toHaveBeenCalledExactlyOnceWith("plans/moon.md", {
+      operation: "create.task", id: "ORB-003", storyId: "ORB-S01", title: "Review skyline", tableHeaderLine: 30,
+      cells: { Priority: "P1", Status: "Ready", Dependencies: "None", "Repository / owner": "observatory-ui", "Required outcome": "Review skyline" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Refresh and retry" }));
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onAuthor).toHaveBeenCalledTimes(2));
+  });
+
+  it("returns focus to the task trigger when linking the first task moves its story to a project", async () => {
+    const first = story("ORB-S03", []);
+    function Harness() {
+      const [board, setBoard] = useState<Board>({ ...writable(), stories: [...writable().stories, first] });
+      return <Stories {...props(board)} editable onRefresh={async () => true} onAuthor={async (_file, operation) => {
+        if (operation.operation === "create.task") setBoard((current) => ({
+          ...current,
+          stories: current.stories.map((entry) => entry.id === first.id ? { ...entry, taskIds: [operation.id] } : entry),
+          tasks: [...current.tasks, task(operation.id, { storyId: first.id })],
+        }));
+        return true;
+      }} />;
+    }
+    render(<Harness />);
+    const before = group("Story ORB-S03 from plans/moon.md line 10");
+    toggle(before, true);
+    fireEvent.click(within(before).getByRole("button", { name: "Add task to ORB-S03" }));
+    const form = screen.getByRole("form", { name: "Create task for ORB-S03" });
+    fireEvent.change(within(form).getByLabelText("Task ID"), { target: { value: "ORB-003" } });
+    fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Map the sky" } });
+    fireEvent.change(within(form).getByLabelText("Status"), { target: { value: "Ready" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(before).not.toBeInTheDocument());
+    const after = group("Story ORB-S03 from plans/moon.md line 10");
+    await waitFor(() => expect(within(after).getByRole("button", { name: "Add task to ORB-S03" })).toHaveFocus());
+    expect(after).toHaveAttribute("open");
+  });
+
+  it("keeps a confirmed write distinct from a failed refresh and offers recovery", async () => {
+    const onAuthor = vi.fn(async () => false), onRefresh = vi.fn(async () => true);
+    render(<Stories {...props(writable())} editable onAuthor={onAuthor} onRefresh={onRefresh} />);
+    openStory();
+    fireEvent.click(screen.getByRole("button", { name: "Add subtask to ORB-001" }));
+    const form = screen.getByRole("form", { name: "Create subtask for ORB-001" });
+    fireEvent.change(within(form).getByLabelText("Subtask ID"), { target: { value: "ORB-001.2" } });
+    fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Inspect the stars" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(within(form).getByText(/write succeeded, but the view could not refresh/i)).toBeVisible());
+    expect(onAuthor).toHaveBeenCalledExactlyOnceWith("plans/moon.md", {
+      operation: "create.subtask", taskId: "ORB-001", id: "ORB-001.2", title: "Inspect the stars",
+    });
+    expect(within(form).getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(within(form).getByRole("button", { name: "Refresh and retry" }));
+    await waitFor(() => expect(form).not.toBeInTheDocument());
+    expect(onRefresh).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("toggles a parsed subtask and uses the guarded status callback", async () => {
+    const onAuthor = vi.fn(async () => true), onSetStatus = vi.fn(async () => {});
+    render(<Stories {...props(writable())} editable onAuthor={onAuthor} onRefresh={async () => true} onSetStatus={onSetStatus} />);
+    openStory();
+    fireEvent.click(screen.getByRole("checkbox", { name: /ORB-001\.1 Inspect the moon/ }));
+    await waitFor(() => expect(onAuthor).toHaveBeenCalledExactlyOnceWith("plans/moon.md", {
+      operation: "toggle.subtask", taskId: "ORB-001", id: "ORB-001.1",
+    }));
+    fireEvent.change(screen.getByLabelText("Status for ORB-001"), { target: { value: "Complete" } });
+    await waitFor(() => expect(onSetStatus).toHaveBeenCalledWith(expect.objectContaining({ id: "ORB-001" }), "Complete"));
+  });
+
+  it("confirms before a status move drops its qualifier, while cancel leaves the row untouched", async () => {
+    const source = writable();
+    const board = { ...source, tasks: source.tasks.map((entry) => entry.id === "ORB-001"
+      ? { ...entry, status: "Ready - awaiting telescope", statusQualifier: "awaiting telescope" } : entry) };
+    const onSetStatus = vi.fn(async () => {});
+    render(<Stories {...props(board)} editable onRefresh={async () => true} onSetStatus={onSetStatus} />);
+    openStory();
+    const select = screen.getByLabelText("Status for ORB-001");
+    fireEvent.change(select, { target: { value: "Complete" } });
+    const dialog = screen.getByRole("dialog", { name: "Move ORB-001 to Complete?" });
+    expect(dialog).toHaveTextContent("awaiting telescope");
+    expect(onSetStatus).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(select).toHaveValue("Ready");
+    expect(onSetStatus).not.toHaveBeenCalled();
+    fireEvent.change(select, { target: { value: "Complete" } });
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Move ORB-001 to Complete?" }))
+      .getByRole("button", { name: "Move and drop qualifier" }));
+    await waitFor(() => expect(onSetStatus).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "ORB-001" }), "Complete"));
+  });
+
+  it("copies current task context after a status move and preserves a manually edited intent", async () => {
+    const copied = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copied } });
+    const original = writable();
+    const { rerender } = render(<Stories {...props(original)} editable onSetStatus={async () => {}} />);
+    openStory();
+    const trigger = screen.getByRole("button", { name: "Draft with agent for ORB-001" });
+    fireEvent.click(trigger);
+    let panel = screen.getByRole("region", { name: "Agent draft intent for ORB-001" });
+    expect((within(panel).getByLabelText("Intent for ORB-001") as HTMLTextAreaElement).value).toContain("Status: Ready");
+    fireEvent.click(trigger);
+    const moved = { ...original, tasks: original.tasks.map((entry) => entry.id === "ORB-001"
+      ? { ...entry, status: "Complete", statusBase: "Complete" } : entry) };
+    rerender(<Stories {...props(moved)} editable onSetStatus={async () => {}} />);
+    fireEvent.click(trigger);
+    panel = screen.getByRole("region", { name: "Agent draft intent for ORB-001" });
+    expect((within(panel).getByLabelText("Intent for ORB-001") as HTMLTextAreaElement).value).toContain("Status: Complete");
+    fireEvent.click(within(panel).getByRole("button", { name: "Copy intent for ORB-001" }));
+    await waitFor(() => expect(copied).toHaveBeenCalledWith(expect.stringContaining("Status: Complete")));
+    fireEvent.change(within(panel).getByLabelText("Intent for ORB-001"), { target: { value: "My edited plan" } });
+    const changed = { ...moved, tasks: moved.tasks.map((entry) => entry.id === "ORB-001"
+      ? { ...entry, status: "Blocked", statusBase: "Blocked" } : entry) };
+    rerender(<Stories {...props(changed)} editable onSetStatus={async () => {}} />);
+    expect(within(panel).getByLabelText("Intent for ORB-001")).toHaveValue("My edited plan");
+    expect(within(panel).getByText(/Source context changed/)).toBeVisible();
+  });
+
+  it("keeps viewer mode free of enabled mutation controls and drafts only copy intent", async () => {
+    const onAuthor = vi.fn(async () => true);
+    render(<Stories {...props(writable())} onAuthor={onAuthor} />);
+    openStory();
+    expect(screen.queryByRole("button", { name: /^Add (story|task|subtask)/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /ORB-001\.1/ })).toBeDisabled();
+    expect(screen.queryByLabelText("Status for ORB-001")).not.toBeInTheDocument();
+    const copied = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copied } });
+    fireEvent.click(screen.getByRole("button", { name: "Draft with agent for ORB-001.1" }));
+    const panel = screen.getByRole("region", { name: "Agent draft intent for ORB-001.1" });
+    fireEvent.change(within(panel).getByLabelText("Intent for ORB-001.1"), { target: { value: "Review the night sky" } });
+    expect(copied).not.toHaveBeenCalled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Copy intent for ORB-001.1" }));
+    await waitFor(() => expect(copied).toHaveBeenCalledExactlyOnceWith("Review the night sky"));
+    expect(within(panel).getByRole("status")).toHaveTextContent(/Submit it to an external agent manually/);
+    expect(onAuthor).not.toHaveBeenCalled();
   });
 });
 

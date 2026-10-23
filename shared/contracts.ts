@@ -171,6 +171,12 @@ const documentSchema = z.object({
   taskCount: z.number().int().nonnegative(),
 }).readonly();
 
+const taskTableSchema = z.object({
+  file: z.string(),
+  headerLine: z.number().int().positive(),
+  headers: z.array(z.string().min(1)).min(1).readonly(),
+}).strict().readonly();
+
 const findingSchema = z.object({
   id: z.string(),
   file: z.string(),
@@ -196,6 +202,7 @@ export const boardSchema = z.object({
   qwenReadiness: qwenReadinessSummarySchema,
   workflow: workflowSchema,
   documents: z.array(documentSchema).readonly(),
+  taskTables: z.array(taskTableSchema).readonly(),
   projects: z.array(projectSummarySchema).readonly(),
   tasks: z.array(taskSchema).readonly(),
   details: z.array(detailBlockSchema).readonly(),
@@ -206,6 +213,7 @@ export const boardSchema = z.object({
 }).readonly();
 
 export type Board = z.infer<typeof boardSchema>;
+export type TaskTable = z.infer<typeof taskTableSchema>;
 export type CellRef = z.infer<typeof cellRefSchema>;
 export type DataQualityIssue = z.infer<typeof issueSchema>;
 export type Dependency = z.infer<typeof dependencySchema>;

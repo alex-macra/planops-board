@@ -42,6 +42,7 @@ export type {
   Story,
   StoryKind,
   Subtask,
+  TaskTable,
   Task,
   TaskHistory,
   Workflow,
@@ -140,6 +141,23 @@ export interface WriteCell {
   readonly cell: CellRef;
   readonly expected: string;
   readonly value: string;
+}
+
+export type AuthorOperation =
+  | { readonly operation: "create.story"; readonly id: string; readonly title: string; readonly outcome: string; readonly soThat: string; readonly kind?: "story" | "enabler"; readonly role?: string; readonly demo?: string }
+  | { readonly operation: "create.task"; readonly id: string; readonly storyId: string; readonly title: string; readonly tableHeaderLine: number; readonly cells: Readonly<Record<string, string>> }
+  | { readonly operation: "create.subtask"; readonly taskId: string; readonly id: string; readonly title: string; readonly owner?: string }
+  | { readonly operation: "toggle.subtask"; readonly taskId: string; readonly id: string };
+
+export function author(
+  file: string,
+  baseSha256: string,
+  operation: AuthorOperation,
+): Promise<{ readonly file: string; readonly sha256: string }> {
+  return request("/api/write", writeResultSchema, {
+    method: "POST",
+    body: JSON.stringify({ file, baseSha256, ...operation }),
+  });
 }
 
 export function writeCell(

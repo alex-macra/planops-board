@@ -2,7 +2,7 @@ import type { WorkflowConfig } from "../../shared/config.ts";
 import { extractDetailBlocks, type DetailBlock } from "./detail.ts";
 import { buildBoard, type SourceDocument } from "./model.ts";
 import { applyLineChanges, PatchError, type LineChanges, type LineInsert, type LineReplace } from "./patch.ts";
-import { contentLines, extractTables, headings, splitRow, type Table } from "./parse.ts";
+import { contentLines, eligibleTaskTable, extractTables, headings, splitRow, type Table } from "./parse.ts";
 import { documentVocabulary, parseStatus, TASK_ID_HEADERS } from "./statuses.ts";
 import { isStoryId, storyOf } from "./stories.ts";
 import { parseSubtasks } from "./subtasks.ts";
@@ -17,14 +17,6 @@ const TASK_ID_RE = /^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$/;
 const SUBTASK_ID_RE = /^([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\.\d+$/;
 const FIELD_RE = /^- \*\*[^*]+:\*\*/;
 const CHECKLIST_RE = /^  - \[(?<box>[ xX])\] (?<id>[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\.\d+) (?<title>.+?)(?: \[@(?<owner>[^\]]+)\])?$/u;
-const ALLOWED_COLUMNS = new Set([
-  "Priority", "Severity", "Severity/risk", "Status", "Dependencies",
-  "Repository / owner", "Owner repositories", "Owner repository or function",
-  "Owning repo", "Owners", "Owner", "Repository", "Required outcome",
-  "Outcome", "Definition of done", "Behaviour that must survive",
-  "Removed surface", "Recommendation",
-]);
-
 function plain(value: string, name: string): string {
   if (!value || value !== value.trim() || /[\p{Cc}\p{Zl}\p{Zp}]/u.test(value) ||
       value.includes("<!--") || value.includes("-->")) {
@@ -155,10 +147,7 @@ function taskTable(lines: readonly string[], request: Extract<AuthorOperation, {
   const matches = tables.filter((table) => table.headerLine === request.tableHeaderLine);
   if (matches.length !== 1) throw new PatchError("task table header anchor is missing or ambiguous");
   const table = matches[0]!;
-  if (!TASK_ID_HEADERS.has(table.header[0] ?? "") || table.rows.length === 0 ||
-      new Set(table.header).size !== table.header.length ||
-      table.header.slice(1).some((name) => !ALLOWED_COLUMNS.has(name)) ||
-      table.rows.some((row) => row.cells.length !== table.header.length)) {
+  if (!eligibleTaskTable(table)) {
     throw new PatchError("task table has unsupported or malformed columns or rows");
   }
   const expected = table.header.slice(1);
@@ -216,7 +205,7 @@ function planTask(lines: readonly string[], file: string, documents: readonly So
     throw new PatchError("task row cannot round-trip through the table parser");
   }
   const details = section(lines, "Task details");
-  const rowAfter = table.rows[table.rows.length - 1]!.line;
+  const rowAfter = table.rows.at(-1)?.line ?? table.headerLine! + 1;
   const linked = `${current.trimEnd()}${current.trimEnd().endsWith("**") ? " " : ", "}\`${request.id}\``;
   return {
     inserts: [

@@ -731,6 +731,30 @@ html.dark {
   .roadmap-outcome > .roadmap-body { @apply border-t border-ui-border px-3; }
   .roadmap-outcome > .roadmap-body > button { @apply inline-flex min-h-8 items-center; }
 
+  .roadmap-tasks, .roadmap-subtasks { @apply list-none space-y-2 p-0; }
+  .roadmap-tasks { @apply mt-2 border-l border-ui-border pl-3; }
+  .roadmap-subtasks { @apply ml-3 mt-2 border-l border-ui-border pl-3; }
+  .roadmap-task, .roadmap-subtask { @apply min-w-0 rounded-md border border-ui-border bg-ui-bg-raised p-2; overflow-wrap: anywhere; }
+  .roadmap-task-head { @apply flex min-w-0 flex-wrap items-center gap-2 text-sm; }
+  .roadmap-task-head > span:nth-child(2) { @apply min-w-0 flex-1; }
+  .roadmap-subtask > label { @apply flex min-w-0 items-start gap-2 text-sm; }
+  .roadmap-subtask input[type="checkbox"] { @apply mt-0.5 shrink-0; }
+  .roadmap-create, .roadmap-draft { @apply min-w-0; }
+  .roadmap-add { @apply inline-flex min-h-8 items-center text-sm text-ui-accent hover:underline; }
+  .roadmap-form, .roadmap-empty-create { @apply mt-2 min-w-0 space-y-3 rounded-md border border-ui-border bg-ui-bg p-3; }
+  .roadmap-form label, .roadmap-empty-create label { @apply flex min-w-0 flex-col gap-1 text-sm font-medium; }
+  .roadmap-form input, .roadmap-form select, .roadmap-form textarea, .roadmap-empty-create select {
+    @apply min-w-0 w-full rounded-md border border-ui-border bg-ui-bg-raised px-2 py-1.5 text-sm text-ui-text;
+  }
+  .roadmap-form textarea { @apply resize-y; }
+  .roadmap-form-grid { @apply grid min-w-0 gap-3; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
+  .roadmap-form-actions { @apply flex flex-wrap items-center gap-3; }
+  .roadmap-primary { @apply inline-flex min-h-9 items-center rounded-md bg-ui-accent px-3 py-1.5 text-sm font-semibold text-white; }
+  .roadmap-form-feedback { @apply flex flex-wrap items-center gap-2 text-sm text-ui-text; }
+  .roadmap-form-feedback button { @apply text-ui-accent underline; }
+  .roadmap-help { @apply text-xs text-ui-text-muted; }
+  .roadmap-empty-create h2 { @apply text-sm font-semibold; }
+
   .story-lane-head {
     @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-ui-border pb-1.5;
   }

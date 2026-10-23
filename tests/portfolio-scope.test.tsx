@@ -26,7 +26,7 @@ function fixture(tasks: readonly Task[] = [
 ]): Board {
   return { generatedAt: "2026-08-20T12:00:00Z", revision: "a".repeat(64), planRevision: "a".repeat(64), workflow: DEFAULT_WORKFLOW,
     qwenReadiness: { status: "missing", schemaVersion: null, auditBaseCommit: null, capturedAt: null, candidateCount: 0, manifestSha256: null, error: null },
-    tasks: [...tasks], stories: [],
+    tasks: [...tasks], stories: [], taskTables: [],
     documents: ["plans/moon.md", "plans/sun.md"].map((path) => ({ path, title: "Fictional sky", writable: true, sha256: "a".repeat(64), taskCount: 2,
       vocabulary: { bases: DEFAULT_WORKFLOW.statusOrder, source: "configured" } })),
     projects: ["orbit", "sun"].map((id) => ({ id, label: id === "orbit" ? "Observatory" : "Solar", scope: "product", primaryCount: 2, taskCount: 2, parked: null })),

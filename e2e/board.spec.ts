@@ -209,6 +209,7 @@ test("Roadmap native disclosures preserve keyboard navigation and story links wi
   const outcome = epic.getByRole("group", { name: /^(Story|Enabler) / }).first();
   const projectSummary = project.locator(":scope > summary"), epicSummary = epic.locator(":scope > summary");
   const outcomeSummary = outcome.locator(":scope > summary"), action = outcome.getByRole("button", { name: /^Open story / });
+  const addStory = epic.getByRole("button", { name: /^Add story in / });
   await expect(project).toHaveAttribute("open", ""); await expect(epic).toHaveAttribute("open", "");
   await expect(outcome).not.toHaveAttribute("open");
   const activate = async (disclosure: Locator, key: string, open: boolean) => {
@@ -242,7 +243,9 @@ test("Roadmap native disclosures preserve keyboard navigation and story links wi
     await activate(outcome, key, true); await expect(project).toHaveAttribute("open", ""); await expect(epic).toHaveAttribute("open", "");
     await page.keyboard.press("Tab"); await expect(action).toBeFocused();
     await page.keyboard.press("Shift+Tab"); await expect(outcomeSummary).toBeFocused(); await activate(outcome, key, false);
+    await page.keyboard.press("Tab"); await expect(addStory).toBeFocused();
     await page.keyboard.press("Tab"); await expect(sibling.locator(":scope > summary")).toBeFocused();
+    await page.keyboard.press("Shift+Tab"); await expect(addStory).toBeFocused();
     await page.keyboard.press("Shift+Tab"); await expect(outcomeSummary).toBeFocused();
   }
   await activate(outcome, "Enter", true); await page.keyboard.press("Tab"); await page.keyboard.press("Enter");

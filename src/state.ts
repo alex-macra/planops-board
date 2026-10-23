@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   addNote,
+  author as authorRequest,
   ApiError,
   documentShaOf,
   fetchBoard,
@@ -10,6 +11,7 @@ import {
   moveRow as moveRowRequest,
   writeCell,
   type Board,
+  type AuthorOperation,
   type BoardSession,
   type CellRef,
   type CorpusState,
@@ -200,6 +202,7 @@ export interface BoardState {
   setPriority: (task: Task, priority: string) => Promise<void>;
   moveRow: (task: Task, toLine: number) => Promise<void>;
   addNote: (task: Task, text: string, title?: string) => Promise<void>;
+  author?: (file: string, operation: AuthorOperation) => Promise<boolean>;
   undo: () => Promise<void>;
   clearTouched: () => void;
 }
@@ -349,6 +352,18 @@ export function useBoard({ paused = false, session }: BoardOptions): BoardState 
   const markTouched = useCallback((taskId: string) => {
     setTouched((current) => (current.includes(taskId) ? current : [...current, taskId]));
   }, []);
+
+  const author = useCallback((file: string, operation: AuthorOperation): Promise<boolean> => {
+    if (!session.capabilities.localWrites) return Promise.reject(new Error("This session is read-only"));
+    return enqueue(async () => {
+      const current = boardRef.current;
+      if (!current) throw new Error("The board is not loaded");
+      await authorRequest(file, documentShaOf(current, file), operation);
+      if (operation.operation === "create.task") markTouched(operation.id);
+      if (operation.operation === "create.subtask" || operation.operation === "toggle.subtask") markTouched(operation.taskId);
+      return reload();
+    });
+  }, [enqueue, markTouched, reload, session.capabilities.localWrites]);
 
   /**
    * Write one or more of a row's cells, guarded exactly as a single cell was.
@@ -611,6 +626,7 @@ export function useBoard({ paused = false, session }: BoardOptions): BoardState 
     setPriority,
     moveRow,
     addNote: note,
+    author,
     undo,
     clearTouched,
   };
