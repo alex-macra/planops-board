@@ -2,7 +2,76 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page, type Response } from "@playwright/test";
 
 import { boardSchema } from "../shared/contracts.ts";
+import { resetBrowserRepository } from "./fixture.ts";
 import { expectNowHistoryLanded } from "./settle.ts";
+
+test.describe("open Roadmap author forms", () => {
+  test.beforeEach(async () => { await resetBrowserRepository(); });
+
+  for (const width of [1280, 320]) {
+    test(`story, task and subtask forms and errors meet WCAG 2.2 AA at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/#view=stories&project=moon-garden");
+      const headerPosition = () => page.locator("header.app-header").evaluate((element) => getComputedStyle(element).position);
+      expect(await headerPosition()).toBe(width === 320 ? "static" : "sticky");
+      const scan = async (name: string) => {
+        const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+        expect(results.violations, `${name}: ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
+        if (width === 320) {
+          const dimensions = await page.evaluate(() => ({ client: document.documentElement.clientWidth,
+            scroll: document.documentElement.scrollWidth }));
+          expect(dimensions.scroll, name).toBeLessThanOrEqual(dimensions.client);
+        }
+      };
+      const epic = page.getByRole("group", { name: "Epic plans/moon-garden.md in moon-garden" });
+      await epic.getByRole("button", { name: "Add story in plans/moon-garden.md" }).click();
+      const story = page.getByRole("form", { name: "Create story in plans/moon-garden.md" });
+      expect(await headerPosition()).toBe("static");
+      await expect(story.getByLabel("Story ID")).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(story.getByLabel("Title")).toBeFocused();
+      await scan("story form");
+      await story.getByRole("button", { name: "Save" }).click();
+      await expect(story.getByText("Outcome is required.")).toBeVisible();
+      await expect(story.getByText("So that is required.")).toBeVisible();
+      await scan("story errors");
+      await story.getByRole("button", { name: "Cancel" }).click();
+      await expect.poll(headerPosition).toBe(width === 320 ? "static" : "sticky");
+
+      const outcome = epic.getByRole("group", { name: /^Story MGA-S01 from plans\/moon-garden\.md line / });
+      await outcome.locator(":scope > summary").click();
+      await outcome.getByRole("button", { name: "Add task to MGA-S01" }).click();
+      const task = page.getByRole("form", { name: "Create task for MGA-S01" });
+      expect(await headerPosition()).toBe("static");
+      await task.getByLabel("Task ID").focus();
+      await page.keyboard.press("Tab");
+      await expect(task.getByLabel("Title")).toBeFocused();
+      await scan("task form");
+      await task.getByRole("button", { name: "Save" }).click();
+      await expect(task.getByText("Task ID, title, and status are required.")).toBeVisible();
+      await scan("task errors");
+      await task.getByRole("button", { name: "Cancel" }).click();
+      await expect.poll(headerPosition).toBe(width === 320 ? "static" : "sticky");
+
+      const draft = outcome.getByRole("button", { name: "Draft with agent for MGA-002" });
+      await draft.click();
+      await expect(outcome.getByRole("region", { name: "Agent draft intent for MGA-002" })).toBeVisible();
+      expect(await headerPosition()).toBe(width === 320 ? "static" : "sticky");
+      await draft.click();
+
+      await outcome.getByRole("button", { name: "Add subtask to MGA-002" }).click();
+      const subtask = page.getByRole("form", { name: "Create subtask for MGA-002" });
+      expect(await headerPosition()).toBe("static");
+      await subtask.getByLabel("Subtask ID").focus();
+      await page.keyboard.press("Tab");
+      await expect(subtask.getByLabel("Title")).toBeFocused();
+      await scan("subtask form");
+      await subtask.getByRole("button", { name: "Save" }).click();
+      await expect(subtask.getByText("Subtask ID and title are required.")).toBeVisible();
+      await scan("subtask errors");
+    });
+  }
+});
 
 test("main views have no detectable WCAG 2.2 AA violations", async ({ page }) => {
   await page.goto("/");

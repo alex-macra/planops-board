@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -150,9 +150,14 @@ describe("guarded authoring", () => {
 
   it("creates and toggles a subtask while changing only the marker on toggle", async () => {
     const { runtime, absolute, baseSha256 } = await fixture();
+    const beforeCreate = await readFile(absolute);
     const create = { operation: "create.subtask" as const, taskId: "MGA-002", id: "MGA-002.1", title: "Add [x] keyboard comparison", owner: "alex" };
     const created = await applyWrite(runtime, { file, baseSha256, author: create });
     const beforeToggle = await readFile(absolute, "utf8");
+    expect(Buffer.from(beforeToggle)).toEqual(Buffer.from(beforeCreate.toString("utf8").replace(
+      "- **Note (2026-08-20):** The empty-state wording still needs a final review.",
+      "- **Note (2026-08-20):** The empty-state wording still needs a final review.\n\n- **Subtasks:**\n  - [ ] MGA-002.1 Add [x] keyboard comparison [@alex]",
+    )));
     expect((await loadBoard(runtime)).tasks.find((entry) => entry.id === create.taskId)?.subtasks).toMatchObject([
       { id: create.id, title: create.title, owner: "alex", done: false },
     ]);
@@ -160,6 +165,26 @@ describe("guarded authoring", () => {
     const after = await readFile(absolute, "utf8");
     expect(after).toBe(beforeToggle.replace("  - [ ] MGA-002.1", "  - [x] MGA-002.1"));
     expect((await loadBoard(runtime)).tasks.find((entry) => entry.id === create.taskId)?.subtasks[0]?.done).toBe(true);
+  });
+
+  it("appends a sibling subtask without changing its first neighbor or the trailing newline", async () => {
+    const { runtime, absolute, baseSha256 } = await fixture();
+    const first = await applyWrite(runtime, { file, baseSha256, author: {
+      operation: "create.subtask", taskId: "MGA-002", id: "MGA-002.1", title: "Keep this neighbor",
+    } });
+    const before = await readFile(absolute);
+    await applyWrite(runtime, { file, baseSha256: first.sha256, author: {
+      operation: "create.subtask", taskId: "MGA-002", id: "MGA-002.2", title: "New sibling",
+    } });
+    const after = await readFile(absolute);
+    expect(after).toEqual(Buffer.from(before.toString("utf8").replace(
+      "  - [ ] MGA-002.1 Keep this neighbor",
+      "  - [ ] MGA-002.1 Keep this neighbor\n  - [ ] MGA-002.2 New sibling",
+    )));
+    expect(after.at(-1)).toBe(10);
+    expect((await loadBoard(runtime)).tasks.find((entry) => entry.id === "MGA-002")?.subtasks).toMatchObject([
+      { id: "MGA-002.1", done: false }, { id: "MGA-002.2", done: false },
+    ]);
   });
 
   it("refuses stale digests, duplicate IDs, invalid table and cross-file story before mutation", async () => {
@@ -170,6 +195,9 @@ describe("guarded authoring", () => {
     await expect(applyWrite(runtime, { file, baseSha256, author: { ...task, id: "MGA-001" } })).rejects.toBeInstanceOf(PatchError);
     await expect(applyWrite(runtime, { file, baseSha256, author: { ...task, tableHeaderLine: 9 } })).rejects.toBeInstanceOf(PatchError);
     await expect(applyWrite(runtime, { file, baseSha256, author: { ...task, storyId: "SHR-S01" } })).rejects.toBeInstanceOf(PatchError);
+    await expect(applyWrite(runtime, { file, baseSha256, author: {
+      operation: "create.subtask", taskId: "MGA-002", id: "MGA-002.1", title: "[@alex]",
+    } })).rejects.toBeInstanceOf(PatchError);
     expect(await readFile(absolute, "utf8")).toBe(before);
   });
 
@@ -221,11 +249,36 @@ describe("guarded authoring", () => {
     expect(results.filter((result) => result.status === "rejected")[0]).toMatchObject({ reason: expect.any(ConflictError) });
   });
 
-  it("rolls authoring back byte-for-byte after an external validator refusal", async () => {
+  it.each(["create.story", "create.task", "create.subtask", "toggle.subtask"] as const)
+  ("restores original source bytes and removes atomic files when %s fails external validation", async (operation) => {
     const { runtime, root, absolute, baseSha256 } = await fixture(true);
+    let currentSha = baseSha256;
+    if (operation === "toggle.subtask") {
+      const created = await applyWrite(runtime, { file, baseSha256, author: {
+        operation: "create.subtask", taskId: "MGA-002", id: "MGA-002.1", title: "Already present",
+      } });
+      currentSha = created.sha256;
+    }
     await writeFile(path.join(root, ".projects-board", "validate"), "#!/bin/sh\nprintf 'refused authoring' >&2\nexit 7\n", { mode: 0o755 });
-    const before = await readFile(absolute, "utf8");
-    await expect(applyWrite(runtime, { file, baseSha256, author: story })).rejects.toBeInstanceOf(ValidationError);
-    expect(await readFile(absolute, "utf8")).toBe(before);
+    const other = path.join(root, "plans", "signal-harbor.md");
+    const [before, otherBefore] = await Promise.all([readFile(absolute), readFile(other)]);
+    const author = operation === "create.story" ? story
+      : operation === "create.task" ? task
+        : operation === "create.subtask" ? { operation, taskId: "MGA-002", id: "MGA-002.1", title: "Refused subtask" } as const
+          : { operation, taskId: "MGA-002", id: "MGA-002.1" } as const;
+    await expect(applyWrite(runtime, { file, baseSha256: currentSha, author })).rejects.toBeInstanceOf(ValidationError);
+    expect(await readFile(absolute)).toEqual(before);
+    expect(await readFile(other)).toEqual(otherBefore);
+    expect((await readdir(path.dirname(absolute))).filter((entry) => entry.includes(".board-") && entry.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("refuses CRLF authoring without changing any source bytes", async () => {
+    const { runtime, absolute } = await fixture();
+    const crlf = Buffer.from((await readFile(absolute, "utf8")).replaceAll("\n", "\r\n"));
+    await writeFile(absolute, crlf);
+    const board = await loadBoard(runtime);
+    const baseSha256 = board.documents.find((entry) => entry.path === file)!.sha256;
+    await expect(applyWrite(runtime, { file, baseSha256, author: story })).rejects.toBeInstanceOf(PatchError);
+    expect(await readFile(absolute)).toEqual(crlf);
   });
 });
