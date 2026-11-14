@@ -73,6 +73,20 @@ malformed, oversized, and unsupported versions are ignored.
 - **Delivery summary:** {"version":1,"runId":"run-123","executor":"codex","phase":"review","outcome":"checks-passed","evidence":["PR #12"],"nextGate":"merge","updatedAt":"2026-09-30T12:30:00Z","productRevision":"0123456789abcdef0123456789abcdef01234567"}
 ```
 
+A task detail block may also carry a `Subtasks` checklist. Each line needs a checkbox, an ID that
+extends the parent task ID, a title, and an optional owner. Lines that do not match are reported as
+`subtask-malformed` data-quality issues.
+
+```md
+- **Subtasks:**
+  - [ ] MGA-002.1 Draft the empty-state wording [@sam]
+  - [x] MGA-002.2 Add the clear-filter control
+```
+
+Roadmap supports inline authoring: create stories, tasks, and subtasks, change task status, and
+toggle subtask checkboxes. Every change goes through the same guarded write path as other edits and
+is unavailable in read-only mode.
+
 Available commands:
 
 ```bash
@@ -86,7 +100,8 @@ npm run start -- --repo <read-only-worktree> --read-only --tracking-ref refs/rem
 Both app commands accept `--config <repository-relative-path>` and `--port <number>`. Use
 `--read-only` when Board watches a synchronized ledger worktree: write, note, and commit APIs are
 refused by the server, and the UI hides edit and commit controls. Read-only mode cannot run the
-optional `.projects-board/validate` hook. Set `--tracking-ref` to a local `refs/remotes/...` ref to
+optional `.projects-board/validate` hook; pass `--allow-external-validator` in writable mode to run it
+after each guarded write; a failure rolls the write back. Set `--tracking-ref` to a local `refs/remotes/...` ref to
 show whether the read-only checkout matches, trails, or diverges from the last fetched revision.
 Board compares local Git objects only and never fetches.
 
