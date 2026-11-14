@@ -45,6 +45,8 @@ so merged work is grouped by month.
 - Portfolio navigation: project search in the explorer, scoped Roadmap, Board, and Dependencies views, shared task menus, and a focusable dependency graph (#5).
 - Accepted Qwen3.8-Flash-Next packet headings alongside the legacy heading (#6).
 - Separate tracker, packet, and dispatch readiness in the task reader, and held readiness filters in Board, Backlog, and Dependencies (#7).
+- Roadmap and execution readiness views (#3).
+- Trust-first agent query CLI: `query startable`, `query stale`, and `query issues` (#2).
 
 ### Fixed
 
